@@ -10,7 +10,8 @@
  *
  * It reads the subset of the case shape these suites use: `code`, `name`, `filename`, `options`,
  * and `errors` as a count or as `{ messageId, line? }` entries. A diagnostic's `messageId` is
- * recovered by matching its text against the rule's message templates.
+ * recovered by matching its text against the rule's message templates. Only the rule's own
+ * diagnostics count towards `errors`, and any other, such as a parse error, fails the case.
  */
 import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -40,6 +41,7 @@ interface InvalidCase extends CaseBase {
 }
 
 interface Diagnostic {
+  code?: string;
   message: string;
   filename: string;
   labels: { span: { line: number } }[];
@@ -101,16 +103,23 @@ export class RuleTester {
     const found = lintCases(name, [...valid, ...tests.invalid]);
     const patterns = messagePatterns(rule);
     const idOf = (message: string): string => patterns.find(([, pattern]) => pattern.test(message))?.[0] ?? message;
+    // A case's diagnostics split into the rule's own and any other, such as a parse error, which
+    // would otherwise stand in for a report the rule never made.
+    const code = `${name.slice(0, name.indexOf("/"))}(${ruleId})`;
+    const own = (index: number): Diagnostic[] => (found[index] ?? []).filter((one) => one.code === code);
+    const other = (index: number): string[] => (found[index] ?? []).filter((one) => one.code !== code).map((one) => one.message);
 
     describe(name, () => {
       for (const [index, one] of valid.entries()) {
         it(`valid: ${one.name ?? one.code.slice(0, 60)}`, () => {
-          expect(found[index]?.map((diagnostic) => diagnostic.message)).toEqual([]);
+          expect(other(index)).toEqual([]);
+          expect(own(index).map((diagnostic) => diagnostic.message)).toEqual([]);
         });
       }
       for (const [index, one] of tests.invalid.entries()) {
         it(`invalid: ${one.name ?? one.code.slice(0, 60)}`, () => {
-          const actual = (found[valid.length + index] ?? [])
+          expect(other(valid.length + index)).toEqual([]);
+          const actual = own(valid.length + index)
             .map((diagnostic) => ({ messageId: idOf(diagnostic.message), line: diagnostic.labels[0]?.span.line }))
             .toSorted((a, b) => (a.line ?? 0) - (b.line ?? 0));
           if (typeof one.errors === "number") {
