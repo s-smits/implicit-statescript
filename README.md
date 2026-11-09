@@ -162,12 +162,19 @@ its sync form too), directly or through a function of the same file that does. F
 `.mtime.getTime()`, `+stat.mtime` or `Number(stat.mtime)`, and Bun's `Bun.file(p).lastModified`.
 Not reported: an age that only selects what a report shows or a cache keeps (`files.filter((f) =>
 now - statSync(f).mtimeMs < RECENT)`), "newer than" (`stat.mtimeMs > lastRun`, a cache question),
-an age that is printed, and an elapsed time that reads no file.
+an age that is printed, an elapsed time that reads no file, and retention: a deletion by age in a
+function, and the functions around it, that names no holder (pruning `dist` folders older than a
+week). A holder is named where an identifier, string, template part or regular expression there
+holds a whole word of `holderWords`, with names split at case changes and non-letters (`lockPath`,
+`PART_MS`, `"pass.lock"`, `/\.tmp\.\d+\./`).
 
 Options: `fsWrappers` (functions from another module that return a file's time, such as
 `mtimeOf(path)`, so their result counts as a file time) and `processReaders` (functions that ask
 whether a process lives, such as `isAlive(pid)`; a function that calls one asks the holder, so its
-age test is a fallback and is not reported). Both are empty by default.
+age test is a fallback and is not reported), both empty by default; and `holderWords` (the
+lowercase words a holder goes by, by default `lock`, `locks`, `lockfile`, `lease`, `holder`,
+`pid`, `reaper`, `mutex`, `tmp`, `temp`, `part` and `parts`; a list given replaces the default,
+and a longer one reports more).
 
 ### `prefer-state-union` (opinionated)
 
@@ -443,7 +450,9 @@ How to read them:
   were the false hits. The one left is a function that renames the executable it probes.
 - **`no-age-based-lock`** went from 2 of 5 hits true in the source project to 2 of 3 once it
   required the function to delete, rename or signal; the hits it dropped compared an age only to
-  choose what a report prints.
+  choose what a report prints. It has since stopped reporting a deletion by age in a function that
+  names no holder (`holderWords`); these figures and the counts below were measured before that and
+  were not remeasured, so a hit counted there as retention may now pass.
 - **`prefer-state-union`** is opinionated. As a count of booleans, precision was 33% to 45% on
   every tree at two or more, and no limit reached 80% without losing nearly all recall: a count
   cannot tell a set of independent options from a mode. The two shapes do better, but large

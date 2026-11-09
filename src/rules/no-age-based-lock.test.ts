@@ -106,6 +106,31 @@ export function clear(lock: string): void {
       options: [{ processReaders: ["isAlive"] }],
     },
     {
+      name: "a deletion by age that names no holder is retention",
+      code: `import { readdirSync, rmSync, statSync } from "node:fs";
+const WEEK_MS = 7 * 86_400_000;
+export function pruneBuilds(root: string): void {
+  for (const dir of readdirSync(root)) {
+    if (Date.now() - statSync(dir).mtimeMs > WEEK_MS) rmSync(dir, { recursive: true });
+  }
+}`,
+    },
+    {
+      name: "a holder word only inside a longer word is no holder",
+      code: `import { rmSync, statSync } from "node:fs";
+const WEEK_MS = 7 * 86_400_000;
+export function prune(blocked: string, departure: string): void {
+  if (Date.now() - statSync(blocked).mtimeMs > WEEK_MS) rmSync(departure);
+}`,
+    },
+    {
+      name: "holderWords replaces the default list, so a lock it leaves out is no holder",
+      code: `import { rmSync, statSync } from "node:fs";
+const STALE_MS = 60_000;
+export const clear = (lock: string) => Date.now() - statSync(lock).mtimeMs > STALE_MS && rmSync(lock);`,
+      options: [{ holderWords: ["lease"] }],
+    },
+    {
       name: "a test file is not read",
       filename: "src/locks.test.ts",
       code: `import { rmSync, statSync } from "node:fs";
@@ -180,6 +205,51 @@ export function clear(lock: string): void {
   if (!isAlive(holder) && Date.now() - statSync(lock).mtimeMs > STALE_MS) rmSync(lock);
 }`,
       errors: [{ ...age, line: 6 }],
+    },
+    {
+      name: "a holder named only in an enclosing function",
+      code: `import { readdirSync, rmSync, statSync } from "node:fs";
+const STALE_MS = 60_000;
+export function sweepLocks(root: string): void {
+  readdirSync(root).forEach((entry) => {
+    if (Date.now() - statSync(entry).mtimeMs > STALE_MS) rmSync(entry);
+  });
+}`,
+      errors: [{ ...age, line: 5 }],
+    },
+    {
+      name: "a holder named only in a regular expression",
+      code: `import { readdirSync, rmSync, statSync } from "node:fs";
+const STALE_MS = 60_000;
+export function sweep(root: string): void {
+  const written = /\\.tmp\\.\\d+$/u;
+  for (const entry of readdirSync(root)) {
+    if (written.test(entry) && Date.now() - statSync(entry).mtimeMs > STALE_MS) rmSync(entry);
+  }
+}`,
+      errors: [{ ...age, line: 6 }],
+    },
+    {
+      name: "a holder named only in a template string",
+      code: `import { rmSync, statSync } from "node:fs";
+const STALE_MS = 60_000;
+export function clear(root: string, name: string): void {
+  const file = \`\${root}/\${name}.part\`;
+  if (Date.now() - statSync(file).mtimeMs > STALE_MS) rmSync(file);
+}`,
+      errors: [{ ...age, line: 5 }],
+    },
+    {
+      name: "holderWords adds a word the default lacks",
+      code: `import { readdirSync, rmSync, statSync } from "node:fs";
+const STALE_MS = 60_000;
+export function pruneSessions(root: string): void {
+  for (const dir of readdirSync(root)) {
+    if (Date.now() - statSync(dir).mtimeMs > STALE_MS) rmSync(dir);
+  }
+}`,
+      options: [{ holderWords: ["Session", "sessions"] }],
+      errors: [{ ...age, line: 5 }],
     },
   ],
 });
