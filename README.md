@@ -69,11 +69,19 @@ setState({ phase: "error" });
 ```
 
 A co-write is an object handed to a setter (`setState({ … })`, `this.setState({ … })` or an updater
-returning one), an object spread over another (`{ ...state, … }`), a run of assignments to fields
-of one object (`tool.isResizing = true; tool.isRotating = false;`), or a run of one function's
-`useState` setters. A field is set when it is written anything but `false`, `null` or `undefined`.
-Not reported: a config object created whole and passed on, fields set together (`{ x, y }`), and a
-reset that clears every field.
+returning one), an object spread over a named value (`{ ...state, … }`; a spread of a fresh object
+such as `...(c ? { k } : {})` updates nothing), a run of assignments to fields of one object
+(`tool.isResizing = true; tool.isRotating = false;`), or a run of one function's `useState`
+setters. A field is set when it is written anything but `false`, `null` or `undefined`.
+
+Two shapes show a mode without a count of co-writes. Two fields of one object computed by
+comparisons of one subject that cannot both hold (`isResizing: tool !== "rotation"` beside
+`isRotating: tool === "rotation"`, or `kind === "file"` beside `kind === "dir"`; `&&` joins are read
+conjunct by conjunct) are reported at that object. Two fields written as opposite literals in
+objects of one file (`{ imported: true, frozen: false }` and the reverse) and never both `true` are
+reported at the first such object, unless the objects are handed straight to a call, as options
+are. Not reported: a config object created whole and passed on, fields set together (`{ x, y }`),
+comparisons of two different subjects, and a reset that clears every field.
 
 Options: `fields` (least cluster size, default 2), `writes` (least co-writes of each pair, default
 3), `exclusive` (share of co-writes that must set at most one field, default 0.9), and `setters`

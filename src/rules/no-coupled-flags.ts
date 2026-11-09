@@ -2,14 +2,25 @@ import { defineRule, type ESTree } from "@oxlint/plugins";
 import {
   everyStatementList,
   identifierName,
+  innermost,
   isTestPath,
   literalValue,
   memberObject,
+  objectValues,
+  outermost,
   plainAssignment,
   propertyName,
   setterState,
 } from "../shared/syntax.ts";
-import { asRecord, isNumber, type JsonValue, NAMES_SCHEMA, nameMatcher, type RuleExample } from "../shared/values.ts";
+import {
+  asRecord,
+  isBoolean,
+  isNumber,
+  type JsonValue,
+  NAMES_SCHEMA,
+  nameMatcher,
+  type RuleExample,
+} from "../shared/values.ts";
 
 /**
  * Fields of one state that are written together, where each write sets at most one
@@ -23,7 +34,8 @@ import { asRecord, isNumber, type JsonValue, NAMES_SCHEMA, nameMatcher, type Rul
  *
  * A co-write is the fields of one state written in one place: an object handed to a setter
  * (`setState({ … })`, `this.setState({ … })`, or an updater returning one), an object that updates
- * another by spreading it (`{ ...state, … }`), or a run of statements that assigns fields of one
+ * a named value by spreading it (`{ ...state, … }`; a spread of a fresh object, `...(c ? { k } :
+ * {})`, updates nothing), or a run of statements that assigns fields of one
  * object (`tool.isResizing = true; tool.isRotating = false;`) or calls a function's `useState`
  * setters one after another. A field is set when it is written anything but `false`, `null` or
  * `undefined`. Fields of one state form a cluster when each pair of them is written together at
@@ -31,9 +43,17 @@ import { asRecord, isNumber, type JsonValue, NAMES_SCHEMA, nameMatcher, type Rul
  * reported once, at its first write, when it holds at least `fields` fields and at most one of them
  * is set in a share `exclusive` of the co-writes that touch it.
  *
+ * Two shapes show a mode without that count. Two fields of one object computed by comparisons that
+ * cannot both hold (`isResizing: tool !== "rotation"` beside `isRotating: tool === "rotation"`, or
+ * `kind === "file"` beside `kind === "dir"`) are exclusive by construction, reported at that
+ * object; `&&` joins are read conjunct by conjunct. And two fields written as opposite literals in
+ * objects of one file (`{ imported: true, frozen: false }` and `{ imported: false, frozen: true }`)
+ * and never both `true` are reported at the first such object, where neither object is handed
+ * straight to a call.
+ *
  * Not reported: an object created whole and passed on (a config, whose options are independent
- * choices), fields set together (`{ x, y }`), and a reset that clears every field, which on its own
- * shows no mode. Test files are not read.
+ * choices), fields set together (`{ x, y }`), comparisons of two different subjects, and a reset
+ * that clears every field, which on its own shows no mode. Test files are not read.
  *
  * `setters` names the functions and methods that write a state record from an object beside the
  * `set*` convention (a store's `update`, an editor's `updateInstanceState`), by name with `*` for
@@ -56,6 +76,19 @@ interface CoWrite {
   node: ESTree.Node;
 }
 
+/** One comparison a condition makes: its subject, the value it is held to, and whether equal. */
+interface Comparison {
+  subject: string;
+  against: string;
+  equal: boolean;
+}
+
+/** An object created whole, with the fields it writes as `true` or `false`. */
+interface FlagRecord {
+  node: ESTree.Node;
+  flags: Map<string, boolean>;
+}
+
 /** The state a call's setter sets, by its name or its method's name; a setter the repository
  *  names (`setters`) sets the state of its own name. */
 function setterOfCall(callee: ESTree.Node, setters: (name: string) => boolean = () => false): string | null {
@@ -74,16 +107,75 @@ function valueOf(node: ESTree.Node): Value {
   return cleared ? "clear" : "set";
 }
 
-/** The fields an object literal writes, by name; a spread or a computed key writes none. */
-function objectFields(object: ESTree.ObjectExpression): Map<string, Value> {
-  const fields = new Map<string, Value>();
-  for (const property of object.properties) {
-    const name = property.type === "Property" && !property.computed ? identifierName(property.key) : null;
-    if (property.type === "Property" && name !== null) {
-      fields.set(name, valueOf(property.value));
+/** The comparisons a condition joins with `&&`: `t && t !== "r"` makes one, `t !== "r"`. */
+function comparisonsOf(node: ESTree.Node, text: (node: ESTree.Node) => string): Comparison[] {
+  const bare = innermost(node);
+  if (bare.type === "LogicalExpression" && bare.operator === "&&") {
+    return [...comparisonsOf(bare.left, text), ...comparisonsOf(bare.right, text)];
+  }
+  const equal = bare.type === "BinaryExpression" && (bare.operator === "===" || bare.operator === "==");
+  const differ = bare.type === "BinaryExpression" && (bare.operator === "!==" || bare.operator === "!=");
+  if (bare.type !== "BinaryExpression" || !(equal || differ)) {
+    return [];
+  }
+  const [subject, against] = bare.left.type === "Literal" ? [bare.right, bare.left] : [bare.left, bare.right];
+  return [{ subject: text(subject), against: text(against), equal }];
+}
+
+/** The first pair of fields whose values cannot both hold, with the subject they compare. */
+function exclusivePair(
+  values: ReadonlyMap<string, ESTree.Node>,
+  text: (node: ESTree.Node) => string,
+): [string, string, string] | null {
+  const tests = [...values].map(([name, value]) => [name, comparisonsOf(value, text)] as const);
+  for (const [index, [a, ofA]] of tests.entries()) {
+    for (const [b, ofB] of tests.slice(index + 1)) {
+      // Two comparisons of one subject exclude each other: `x === k` and `x !== k`, or `x === a`
+      // and `x === b` for two literals.
+      const clash = ofA.find((one) =>
+        ofB.some(
+          (other) =>
+            one.subject === other.subject &&
+            (one.against === other.against ? one.equal !== other.equal : one.equal && other.equal),
+        ),
+      );
+      if (clash !== undefined) {
+        return [a, b, clash.subject];
+      }
     }
   }
-  return fields;
+  return null;
+}
+
+/** Each pair of flags written as opposite literals in two records and never both `true`, at the
+ *  first record that sets one: `{ imported: true, frozen: false }` beside the reverse. */
+function oppositePairs(records: readonly FlagRecord[]): [ESTree.Node, string, string, number][] {
+  const found: [ESTree.Node, string, string, number][] = [];
+  const names = [...new Set(records.flatMap((record) => [...record.flags.keys()]))];
+  for (const [index, a] of names.entries()) {
+    for (const b of names.slice(index + 1)) {
+      const both = records.filter((record) => record.flags.has(a) && record.flags.has(b));
+      const only = (x: string, y: string): FlagRecord[] =>
+        both.filter((record) => record.flags.get(x) === true && record.flags.get(y) === false);
+      const clash = both.some((record) => record.flags.get(a) === true && record.flags.get(b) === true);
+      const [first] = [...only(a, b), ...only(b, a)].toSorted((p, q) => p.node.start - q.node.start);
+      const reported = found.some(([node]) => node === first?.node);
+      if (first !== undefined && only(a, b).length > 0 && only(b, a).length > 0 && !clash && !reported) {
+        found.push([first.node, a, b, both.length]);
+      }
+    }
+  }
+  return found;
+}
+
+/** Whether an object is handed straight to a call or `new`, as an options argument is. */
+function passed(object: ESTree.Node): boolean {
+  const at = outermost(object);
+  const parent = at.parent;
+  return (
+    (parent?.type === "CallExpression" || parent?.type === "NewExpression") &&
+    parent.arguments.some((argument) => argument === at)
+  );
 }
 
 /** The setter an object reaches as its argument, or as what an updater passed to it returns:
@@ -129,6 +221,14 @@ const stateName = (field: string): string => {
   const word = /^(?:is|has)([A-Z]\w*)$/u.exec(field)?.[1];
   return word === undefined ? field : `${word.charAt(0).toLowerCase()}${word.slice(1)}`;
 };
+
+/** A suggested union of named states: `mode: "loading" | "error"`. */
+const suggestOf = (states: readonly string[]): string =>
+  `mode: ${states.map((one) => `"${one}"`).join(" | ")}`;
+
+/** Whether each written value sets its field or clears it. */
+const settings = (values: ReadonlyMap<string, ESTree.Node>): Map<string, Value> =>
+  new Map([...values].map(([name, value]) => [name, valueOf(value)]));
 
 /** The clusters of one state's co-writes: fields linked pairwise, joined into components. */
 function clusters(writes: readonly CoWrite[], minWrites: number): string[][] {
@@ -179,6 +279,10 @@ export const noCoupledFlagsRule = defineRule({
     ],
     messages: {
       mode: "{{names}} of `{{state}}` are written together {{count}} times and at most one is set in each; the combinations seen are {{seen}}. They are one mode with no name: hold it in one field, such as `{{suggest}}`.",
+      exclusive:
+        "`{{a}}` and `{{b}}` are computed from `{{subject}}` so that both cannot hold. They are one mode with no name: hold it in one field, such as `{{suggest}}`.",
+      opposite:
+        "`{{a}}` and `{{b}}` are written as opposite literals in {{count}} objects of this file and never both `true`. They are one mode with no name: hold it in one field, such as `{{suggest}}`.",
     },
   },
   create(context) {
@@ -191,17 +295,16 @@ export const noCoupledFlagsRule = defineRule({
     const share = numberOr(option.exclusive, EXCLUSIVE);
     const setters = nameMatcher(option.setters);
     const writes: CoWrite[] = [];
+    const records: FlagRecord[] = [];
     const text = (node: ESTree.Node): string => context.sourceCode.getText(node).replaceAll(/\s+/gu, "");
 
     /** One statement's write: a field of an object assigned, or a `useState` setter called. */
-    function statementWrite(statement: ESTree.Statement): [string, string, Value, ESTree.Node] | null {
+    function statementWrite(statement: ESTree.Statement): [string, string, ESTree.Node, ESTree.Node] | null {
       const assigned = plainAssignment(statement);
       if (assigned !== null) {
         const field = propertyName(assigned.left);
         const object = memberObject(assigned.left);
-        return field !== null && object !== null
-          ? [text(object), field, valueOf(assigned.right), statement]
-          : null;
+        return field !== null && object !== null ? [text(object), field, assigned.right, statement] : null;
       }
       const expression = statement.type === "ExpressionStatement" ? statement.expression : null;
       const [argument] = expression?.type === "CallExpression" ? expression.arguments : [];
@@ -212,21 +315,29 @@ export const noCoupledFlagsRule = defineRule({
       if (field === null || argument === undefined || argument.type === "SpreadElement") {
         return null;
       }
-      return [component(statement), field, valueOf(argument), statement];
+      return [component(statement), field, argument, statement];
+    }
+
+    /** Report the first pair of fields whose comparisons cannot both hold. */
+    function exclusiveAt(values: ReadonlyMap<string, ESTree.Node>, node: ESTree.Node): void {
+      const pair = exclusivePair(values, text);
+      if (pair !== null) {
+        const [a, b, subject] = pair;
+        const suggest = suggestOf([a, b].map(stateName));
+        context.report({ node, messageId: "exclusive", data: { a, b, subject, suggest } });
+      }
     }
 
     /** The co-writes of each run of consecutive writing statements, one per state written. */
     function runs(body: readonly ESTree.Statement[]): void {
-      let run: [string, string, Value, ESTree.Node][] = [];
+      let run: [string, string, ESTree.Node, ESTree.Node][] = [];
       const close = (): void => {
         for (const [state, under] of Map.groupBy(run, ([owner]) => owner)) {
           const [first] = under;
           if (first !== undefined && under.length >= 2) {
-            writes.push({
-              state,
-              fields: new Map(under.map(([, field, value]) => [field, value])),
-              node: first[3],
-            });
+            const values = new Map(under.map(([, field, value]) => [field, value]));
+            writes.push({ state, fields: settings(values), node: first[3] });
+            exclusiveAt(values, first[3]);
           }
         }
         run = [];
@@ -246,10 +357,22 @@ export const noCoupledFlagsRule = defineRule({
       ...everyStatementList(runs),
       ObjectExpression: (node) => {
         const spread = node.properties.find((property) => property.type === "SpreadElement");
-        const state = setterOf(node, setters) ?? (spread === undefined ? null : text(spread.argument));
-        const fields = objectFields(node);
-        if (state !== null && fields.size >= 2) {
-          writes.push({ state, fields, node });
+        const named =
+          spread !== undefined && ["Identifier", "MemberExpression"].includes(innermost(spread.argument).type);
+        const state = setterOf(node, setters) ?? (named ? text(spread.argument) : null);
+        const values = objectValues(node);
+        if (state !== null && values.size >= 2) {
+          writes.push({ state, fields: settings(values), node });
+        }
+        exclusiveAt(values, node);
+        const flags = new Map(
+          [...values].flatMap(([name, value]) => {
+            const literal = literalValue(value);
+            return isBoolean(literal) ? [[name, literal] as const] : [];
+          }),
+        );
+        if (state === null && !passed(node) && flags.size >= 2) {
+          records.push({ node, flags });
         }
       },
       "Program:exit": () => {
@@ -280,10 +403,14 @@ export const noCoupledFlagsRule = defineRule({
                 state,
                 count: String(touching.length),
                 seen: [...seen].map((one) => `{${one}}`).join(", "),
-                suggest: `mode: ${states.map((one) => `"${one}"`).join(" | ")}`,
+                suggest: suggestOf(states),
               },
             });
           }
+        }
+        for (const [node, a, b, count] of oppositePairs(records)) {
+          const suggest = suggestOf([...[a, b].map(stateName), "idle"]);
+          context.report({ node, messageId: "opposite", data: { a, b, count: String(count), suggest } });
         }
       },
     };

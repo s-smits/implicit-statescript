@@ -175,3 +175,15 @@ function decidedBy(parent: ESTree.Node, at: ESTree.Node): boolean {
   }
   return parent.type === "ReturnStatement";
 }
+
+/** The values an object literal writes, by field name; a spread or a computed key writes none. */
+export function objectValues(object: ESTree.ObjectExpression): Map<string, ESTree.Node> {
+  const values = new Map<string, ESTree.Node>();
+  for (const property of object.properties) {
+    const name = property.type === "Property" && !property.computed ? identifierName(property.key) : null;
+    if (property.type === "Property" && name !== null) {
+      values.set(name, property.value);
+    }
+  }
+  return values;
+}

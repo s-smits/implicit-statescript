@@ -74,6 +74,52 @@ export function clearOnce(store: { open: boolean; dirty: boolean }) {
   store.open = false;
   store.dirty = false;
 }
+export function nodes(flags: number, notes: string[]) {
+  return [
+    { ...(notes.length > 0 ? { notes } : {}), sync: (flags & 1) === 1, id: null }, // ADMITTED a spread of a fresh object updates no state
+    { ...(notes.length > 0 ? { notes } : {}), sync: false, id: flags },
+    { ...(notes.length > 0 ? { notes } : {}), sync: (flags & 2) === 2, id: null },
+  ];
+}
+export function reduce(view: { dragging: boolean; typing: boolean }, action: string) {
+  if (action === "drag") return { ...view, dragging: true, typing: false }; // REPORT a reducer's mode over the state it spreads
+  if (action === "type") return { ...view, dragging: false, typing: true };
+  return { ...view, dragging: false, typing: false };
+}
+`;
+
+/** Modes shown without a count: comparisons that cannot both hold, and opposite literals. */
+const UNCOUNTED = `export class Tool {
+  setState(next: object) {
+    return next;
+  }
+  start(handle: string | null) {
+    this.setState({ // REPORT complementary comparisons of one handle
+      isResizing: handle !== null && handle !== "rotation",
+      isRotating: handle === "rotation",
+    });
+  }
+}
+export function kinds(kind: string, other: string) {
+  const one = { isFile: kind === "file", isDir: kind === "dir" }; // REPORT one subject equal to two literals
+  const two = { isFile: kind === "file", isLink: other === "link" }; // ADMITTED two subjects
+  const three = { ready: kind !== "", named: kind !== "anon" }; // ADMITTED both can hold
+  return [one, two, three];
+}
+export function origins(digest: string) {
+  return [
+    { digest, imported: false, frozen: false },
+    { digest, imported: true, frozen: false }, // REPORT opposite literals, never both set
+    { digest, imported: false, frozen: true },
+  ];
+}
+export function marks(digest: string) {
+  return [
+    { digest, open: true, dirty: false }, // ADMITTED both set in another object
+    { digest, open: false, dirty: true },
+    { digest, open: true, dirty: true },
+  ];
+}
 `;
 
 tester.run("implicit-state/no-coupled-flags", noCoupledFlagsRule, {
@@ -113,15 +159,61 @@ export function clearOnce(store: { open: boolean; dirty: boolean }) {
     { name: "writes: 5 asks for more co-writes", filename: "src/many.tsx", code: MODES, options: [{ writes: 5 }] },
     { name: "a test file is not read", filename: "src/modes.spec.tsx", code: MODES },
     { name: "a method outside the set* convention writes nothing by default", code: UPDATES },
+    {
+      name: "a spread of a fresh object updates no state",
+      code: `export function nodes(flags: number, notes: string[]) {
+  return [
+    { ...(notes.length > 0 ? { notes } : {}), sync: (flags & 1) === 1, id: null },
+    { ...(notes.length > 0 ? { notes } : {}), sync: false, id: flags },
+    { ...(notes.length > 0 ? { notes } : {}), sync: (flags & 2) === 2, id: null },
+  ];
+}`,
+    },
+    {
+      name: "comparisons of two subjects, or that can both hold, show no mode",
+      code: `export function kinds(kind: string, other: string) {
+  const two = { isFile: kind === "file", isLink: other === "link" };
+  const three = { ready: kind !== "", named: kind !== "anon" };
+  return [two, three];
+}`,
+    },
+    {
+      name: "opposite literals that are both true in another object show no mode",
+      code: `export function marks(digest: string) {
+  return [
+    { digest, open: true, dirty: false },
+    { digest, open: false, dirty: true },
+    { digest, open: true, dirty: true },
+  ];
+}`,
+    },
+    {
+      name: "opposite literals in objects handed straight to a call are options",
+      code: `export function build(run: (options: object) => void) {
+  run({ minify: true, sourcemap: false });
+  run({ minify: false, sourcemap: true });
+}`,
+    },
   ],
   invalid: [
     {
-      name: "the whole fixture reports the setter run and the drawing tool, and nothing else",
+      name: "the whole fixture reports the setter run, the drawing tool and the reducer, and nothing else",
       filename: "src/modes.tsx",
       code: MODES,
       errors: [
         { ...mode, line: 7 },
         { ...mode, line: 29 },
+        { ...mode, line: 71 },
+      ],
+    },
+    {
+      name: "comparisons that cannot both hold and opposite literals are modes without a count",
+      filename: "src/shapes.ts",
+      code: UNCOUNTED,
+      errors: [
+        { messageId: "exclusive", line: 6 },
+        { messageId: "exclusive", line: 13 },
+        { messageId: "opposite", line: 21 },
       ],
     },
     {
