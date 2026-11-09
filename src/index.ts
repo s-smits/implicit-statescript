@@ -20,7 +20,9 @@ import { preferStateUnionRule } from "./rules/prefer-state-union.ts";
  * local wrapper whose body reduces to one. The cross-file shape (one set of string literals
  * compared by hand in several files) needs every file at once and is the scan in `src/scan/`.
  *
- * Every rule reports and none fixes: naming the states is the change.
+ * Every rule reports and none fixes: naming the states is the change. `configs/recommended.json`
+ * turns on the rules whose labelled hits were mostly true, and `configs/opinionated.json` adds
+ * `prefer-state-union`, whose hits on foreign code were right about half the time.
  */
 const implicitStatePlugin = eslintCompatPlugin({
   meta: { name: "implicit-state" },

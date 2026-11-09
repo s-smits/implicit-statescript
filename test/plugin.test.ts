@@ -41,3 +41,35 @@ it("names in the README and the skills only rules and scan kinds that exist", ()
     expect([...ids].filter((id) => !known.has(id)), path).toEqual([]);
   }
 });
+
+/** The rules a config enables, by id, and the configs it extends. */
+function tier(name: string): { rules: string[]; extends: string[] } {
+  const config = JSON.parse(readFileSync(resolve(ROOT, `src/configs/${name}.json`), "utf8")) as {
+    rules: Record<string, unknown>;
+    extends?: string[];
+  };
+  const rules = Object.keys(config.rules).map((id) => id.replace(/^implicit-state\//u, ""));
+  return { rules, extends: config.extends ?? [] };
+}
+
+it("places every rule in one tier: the recommended config, or the opinionated one that extends it", () => {
+  const recommended = tier("recommended");
+  const opinionated = tier("opinionated");
+  expect(opinionated.extends).toEqual(["./recommended.json"]);
+  expect(recommended.rules.filter((id) => opinionated.rules.includes(id))).toEqual([]);
+  expect([...recommended.rules, ...opinionated.rules].toSorted()).toEqual(Object.keys(plugin.rules).toSorted());
+});
+
+it("reports on the examples what the README says each config reports", () => {
+  const counts = (config: string): number => {
+    const child = Bun.spawnSync(
+      [process.execPath, resolve(ROOT, "node_modules/oxlint/bin/oxlint"), "-c", config, "--format=json", "examples"],
+      { cwd: ROOT },
+    );
+    const report = JSON.parse(child.stdout.toString()) as { diagnostics: { code: string }[] };
+    return report.diagnostics.filter((one) => one.code.startsWith("implicit-state(")).length;
+  };
+  expect(counts("src/configs/recommended.json")).toBe(4);
+  expect(counts("src/configs/opinionated.json")).toBe(7);
+  expect(counts("examples/tailored.oxlintrc.json")).toBe(6);
+});

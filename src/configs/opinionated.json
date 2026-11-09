@@ -1,0 +1,6 @@
+{
+  "extends": ["./recommended.json"],
+  "rules": {
+    "implicit-state/prefer-state-union": "warn"
+  }
+}

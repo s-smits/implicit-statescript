@@ -1,10 +1,7 @@
 {
   "categories": { "correctness": "off" },
-  "jsPlugins": [{ "name": "implicit-state", "specifier": "../src/index.ts" }],
+  "extends": ["../src/configs/opinionated.json"],
   "rules": {
-    "implicit-state/no-age-based-lock": "warn",
-    "implicit-state/no-coupled-flags": "warn",
-    "implicit-state/no-marker-file-state": "warn",
     "implicit-state/prefer-state-union": ["warn", { "ignore": ["PdfSettings"] }]
   }
 }

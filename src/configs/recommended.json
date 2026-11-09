@@ -1,0 +1,8 @@
+{
+  "jsPlugins": [{ "name": "implicit-state", "specifier": "../index.ts" }],
+  "rules": {
+    "implicit-state/no-age-based-lock": "warn",
+    "implicit-state/no-coupled-flags": "warn",
+    "implicit-state/no-marker-file-state": "warn"
+  }
+}

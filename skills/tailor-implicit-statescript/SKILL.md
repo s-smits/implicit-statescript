@@ -13,7 +13,7 @@ made: the same rules, narrowed or widened by facts true of that repository alone
 
 Install first (`install-implicit-statescript`). Then:
 
-1. **Run the generic tier.** Run Oxlint with the plugin at its defaults and the scan
+1. **Run the shipped tiers.** Run Oxlint with the recommended or opinionated config and the scan
    (`bun vendor/implicit-statescript/src/scan/cli.ts scan <dir>`), and keep the hit count of each
    rule as the baseline.
 2. **Run the survey**: `bun vendor/implicit-statescript/src/scan/cli.ts survey <dir>` (add `--json`

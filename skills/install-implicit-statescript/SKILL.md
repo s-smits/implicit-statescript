@@ -10,14 +10,17 @@ description: Vendor the implicit-statescript Oxlint plugin into a TypeScript rep
 2. Install the runtime dependencies with the target's package manager, pinned as here:
    `oxlint@1.83.0` and `@oxlint/plugins@1.83.0`, and `typescript5@npm:typescript@5.9.3` if the
    scan is wanted.
-3. Register the plugin in the target's Oxlint config (`oxlint.config.ts` or `.oxlintrc.json`):
-   add `{ "name": "implicit-state", "specifier": "./vendor/implicit-statescript/src/index.ts" }`
-   to `jsPlugins`, and set `implicit-state/no-age-based-lock`, `implicit-state/no-coupled-flags`,
-   `implicit-state/no-marker-file-state` and `implicit-state/prefer-state-union` to `"warn"`. Merge
-   with the existing config; do not replace it.
-4. Run Oxlint and read every implicit-state warning before proposing a change. `prefer-state-union`
-   and `no-age-based-lock` are experimental (precision near a third to a half when measured), so
-   report their hits as places to look, not defects. Raise a rule to `error` only on the owner's
+3. Register the plugin in the target's Oxlint config. In `.oxlintrc.json`, add
+   `./vendor/implicit-statescript/src/configs/recommended.json` to `extends`, which loads the plugin
+   and sets `implicit-state/no-age-based-lock`, `implicit-state/no-coupled-flags` and
+   `implicit-state/no-marker-file-state` to `"warn"`; extend `opinionated.json` instead only if the
+   owner also wants `implicit-state/prefer-state-union`. In `oxlint.config.ts`, add
+   `{ "name": "implicit-state", "specifier": "./vendor/implicit-statescript/src/index.ts" }` to
+   `jsPlugins` and set the same rules to `"warn"`. Merge with the existing config; do not replace
+   it.
+4. Run Oxlint and read every implicit-state warning before proposing a change. The measured
+   precision rests on small labelled counts, and `prefer-state-union` was right on about half of
+   its labelled hits, so report hits as places to look, not defects. Raise a rule to `error` only on the owner's
    word.
 5. Optionally run the scan, which needs Bun:
    `bun vendor/implicit-statescript/src/scan/cli.ts scan <src folder>`. Add `--error` to gate on it

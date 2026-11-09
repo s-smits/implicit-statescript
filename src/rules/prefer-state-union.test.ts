@@ -5,6 +5,94 @@ import { preferStateUnionRule } from "./prefer-state-union.ts";
 const tester = new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } });
 const record = { messageId: "record" };
 const parameters = { messageId: "parameters" };
+const lifecycle = { messageId: "lifecycle" };
+const derived = { messageId: "derived" };
+
+/** The two shapes read from what the code does with its flags, each beside its nearest miss. */
+const SHAPES = `export class Container { // REPORT a lifecycle: two flags moved by different methods
+  private started = false;
+  private closed: boolean = false;
+  constructor(private readonly name: string) {}
+  start(): void {
+    if (this.closed) throw new Error(this.name);
+    this.started = true;
+  }
+  close = (): void => {
+    this.closed = true;
+  };
+}
+export class Keys { // ADMITTED modifier keys the same handlers move together
+  shift = false;
+  alt = false;
+  down(event: { shiftKey: boolean; altKey: boolean }): void {
+    this.shift = event.shiftKey;
+    this.alt = event.altKey;
+  }
+  up(event: { shiftKey: boolean; altKey: boolean }): void {
+    this.shift = event.shiftKey;
+    this.alt = event.altKey;
+  }
+}
+export class Environment { // ADMITTED configuration only the constructor sets, beside one moved flag
+  skipFsCheck: boolean;
+  watching = false;
+  closing = false;
+  constructor(skip: boolean) {
+    this.skipFsCheck = skip;
+    this.watching = !skip;
+  }
+  close(): void {
+    this.closing = true;
+  }
+}
+export interface Element { // ADMITTED independent properties of a record are a type, not a phase
+  isDeleted: boolean;
+  locked: boolean;
+  frozen: boolean;
+}
+export const isOver = (h: boolean, v: boolean): { either: boolean; horizontal: boolean; vertical: boolean } => { // REPORT a flag derived from two others
+  const either = h || v;
+  return { either, horizontal: h, vertical: v };
+};
+export function cut(code: number, signal: string | null) {
+  return { ok: code === 0, killed: signal !== null, failed: code !== 0 && signal !== null }; // ADMITTED derived from no field of the record
+}
+export function settle(code: number) {
+  const ok = code === 0;
+  const late = !ok;
+  return { ok, late, done: ok || late }; // REPORT derived through consts from two flags
+}
+export function label(title: string, name: string) {
+  return { title, name, shown: title || name }; // ADMITTED a default, not a flag
+}
+export function open(options: { minify: boolean; sourcemap: boolean }) {
+  return { minify: options.minify, sourcemap: options.sourcemap, watch: false }; // ADMITTED independent options
+}
+`;
+
+/** Members that never change are no flags; a readonly flag the constructor computes still is. */
+const CONSTANTS = `export interface Procedure { // ADMITTED a brand typed as one literal is no flag
+  procedure: true;
+  query: boolean;
+  mutation: boolean;
+}
+export class Namespace { // ADMITTED fields that never move are no flags
+  declare isNamespace: true;
+  readonly isCluster = false;
+  readonly lazy: boolean = true;
+  deoptimized = false;
+}
+export class Declarator { // REPORT readonly and declared flags the constructor computes still count
+  readonly isUsing: boolean;
+  readonly isAwaitUsing: boolean;
+  declare isConst: boolean;
+  constructor(kind: string) {
+    this.isUsing = kind === "using";
+    this.isAwaitUsing = kind === "await using";
+    this.isConst = kind === "const";
+  }
+}
+`;
 
 const BOOLS = `import { useState } from "react";
 export interface Upload { // REPORT four required flags spell one state
@@ -117,6 +205,17 @@ export function Toolbar() {
 export const draw = (fill: boolean, stroke: boolean, shadow: boolean, dashed: boolean) => [fill, stroke, shadow, dashed];`,
       options: [{ ignore: ["Toolbar", "draw"] }],
     },
+    {
+      name: "ignore names a class for its lifecycle and a function for its derived flag",
+      code: SHAPES,
+      options: [{ ignore: ["Container", "isOver", "settle"] }],
+    },
+    {
+      name: "max: null leaves the two shapes alone",
+      code: `export interface Upload { pending: boolean; sending: boolean; sent: boolean; failed: boolean }`,
+      options: [{ max: null }],
+    },
+    { name: "a test file is not read for the shapes either", filename: "src/lifecycle.test.ts", code: SHAPES },
   ],
   invalid: [
     {
@@ -132,7 +231,7 @@ export const draw = (fill: boolean, stroke: boolean, shadow: boolean, dashed: bo
     },
     {
       name: "an object type literal holds a record too",
-      code: `export type Flags = { a: boolean; b: boolean; c: boolean; d: true };`,
+      code: `export type Flags = { a: boolean; b: boolean; c: boolean; d: true | false };`,
       errors: [{ ...record, line: 1 }],
     },
     {
@@ -147,6 +246,45 @@ export const draw = (fill: boolean, stroke: boolean, shadow: boolean, dashed: bo
 export interface EditorState { idle: boolean; busy: boolean; saving: boolean; failed: boolean }`,
       options: [{ ignore: ["*Options"] }],
       errors: [{ ...record, line: 2 }],
+    },
+    {
+      name: "a lifecycle held as flags and a flag derived from two others, and nothing else",
+      filename: "src/lifecycle.ts",
+      code: SHAPES,
+      errors: [
+        { ...lifecycle, line: 1 },
+        { ...derived, line: 42 },
+        { ...derived, line: 52 },
+      ],
+    },
+    {
+      name: "the shapes stand where the count is off",
+      code: SHAPES,
+      options: [{ max: null }],
+      errors: 3,
+    },
+    {
+      name: "brands and constants do not count, a computed readonly flag does",
+      code: CONSTANTS,
+      options: [{ max: 2 }],
+      errors: [{ ...record, line: 12 }],
+    },
+    {
+      name: "a class past the count whose methods also move its flags is reported once, as a lifecycle",
+      code: `export class Socket {
+  connecting = false;
+  open = false;
+  closing = false;
+  closed = false;
+  connect(): void {
+    this.connecting = true;
+  }
+  close(): void {
+    this.closing = true;
+    this.closed = true;
+  }
+}`,
+      errors: [{ ...lifecycle, line: 1 }],
     },
     {
       name: "params lowers the parameter threshold",

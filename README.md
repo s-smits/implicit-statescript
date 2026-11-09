@@ -35,8 +35,15 @@ is the change.
 Every rule reads only syntax (ESTree), skips test files (paths under `test/`, `tests/`,
 `__tests__/`, `__mocks__/`, `fixture/` or `fixtures/`, and `*.test.*` or `*.spec.*` files), and
 recognises platform APIs by their own names under any receiver or import, so `existsSync` from
-`node:fs`, `fs.existsSync` and a destructured `existsSync` all count. The status column comes from
-the measurements below.
+`node:fs`, `fs.existsSync` and a destructured `existsSync` all count.
+
+The rules come in two tiers, each an Oxlint config in `src/configs/`. The **recommended** tier
+(`recommended.json`) holds the rules that define an implicit state machine and find it from the
+syntax alone, and whose labelled hits were mostly true (15 of 18). The **opinionated** tier
+(`opinionated.json`, which extends the recommended one) adds `prefer-state-union`, a stance that
+holds in a codebase that has chosen it and is contested in one that has not: on foreign code about
+half of its labelled hits were a state spelled as flags, and the rest were independent options or
+unrelated latches. The precision column comes from the measurements below.
 
 Names follow ESLint's convention: a prefix of `no`, `prefer`, `require` or `max` says what kind of
 rule it is, and the rest names its subject. Earlier versions called the rules `excessive-bools`
@@ -44,12 +51,12 @@ rule it is, and the rest names its subject. Earlier versions called the rules `e
 (`no-marker-file-state`) and `mtime-as-lock` (`no-age-based-lock`), and the scan
 `state-literal-spread` (`no-scattered-state-literals`).
 
-| Rule | Reports | Status |
-| --- | --- | --- |
-| `no-coupled-flags` | fields written together where each write sets at most one | generic, low recall |
-| `prefer-state-union` | a record, class, `useState` set or signature with more than three booleans | experimental |
-| `no-marker-file-state` | a phase decided by which files exist in one folder | generic, one known false shape |
-| `no-age-based-lock` | a file's age against a constant deciding whether its holder lives | experimental |
+| Rule | Reports | Tier | Labelled hits true |
+| --- | --- | --- | --- |
+| `no-coupled-flags` | fields written so that at most one is set: together each time, by exclusive comparisons, or as opposite literals | recommended | 7 of 8 |
+| `no-marker-file-state` | a phase decided by which files the module writes in one folder | recommended | 3 of 4 |
+| `no-age-based-lock` | a file's age against a constant, in a function that then deletes, renames or signals | recommended | 5 of 6 |
+| `prefer-state-union` | flags a class's methods move apart, a flag derived from two others, or more than three booleans on one record | opinionated | 16 of 29 (the two shapes, foreign code) |
 
 ### `no-coupled-flags`
 
@@ -87,38 +94,6 @@ Options: `fields` (least cluster size, default 2), `writes` (least co-writes of 
 3), `exclusive` (share of co-writes that must set at most one field, default 0.9), and `setters`
 (functions and methods that write a state record from an object beside the `set*` convention,
 such as a store's `update` or an editor's `updateInstanceState`; empty by default).
-
-### `prefer-state-union`
-
-Several booleans on one record are usually one state spelled as flags. Ported from Clippy's
-`struct_excessive_bools` and `fn_params_excessive_bools`.
-
-```ts
-// Bad
-export interface Job {
-  queued: boolean;
-  running: boolean;
-  done: boolean;
-  failed: boolean;
-}
-
-// Good
-export interface Job {
-  state: "queued" | "running" | "done" | "failed";
-}
-```
-
-It counts required `boolean` (or `true`/`false`, with `null` or `undefined` beside them) members of
-an interface, object type literal or class, a class field initialised to `true` or `false`, and the
-boolean `useState` cells of one function (React's and Preact's `useState(false)` or
-`useState<boolean>()`). Optional members do not count: a record of `minify?`, `sourcemap?` is a set
-of independent settings. Declaration files (`.d.ts`) are not read.
-
-Options: `max` (booleans allowed on a record, default 3, as Clippy), `params` (boolean parameters
-allowed on a function, default 3; `null` turns the function half off for a repository that already
-reports boolean parameters another way), and `ignore` (records, classes, components and functions
-the repository reads as settings rather than state, such as `TldrawOptions` or `*Props`; empty by
-default). The message names the record, so a hit can be copied into `ignore`.
 
 ### `no-marker-file-state`
 
@@ -192,6 +167,68 @@ Options: `fsWrappers` (functions from another module that return a file's time, 
 whether a process lives, such as `isAlive(pid)`; a function that calls one asks the holder, so its
 age test is a fallback and is not reported). Both are empty by default.
 
+### `prefer-state-union` (opinionated)
+
+Booleans that are one state spelled as flags admit combinations nobody means. The rule reads two
+shapes from what the code does with the flags, and a count ported from Clippy's
+`struct_excessive_bools` and `fn_params_excessive_bools`.
+
+```ts
+// Bad
+class Server {
+  started = false;
+  closed = false;
+  start() { this.started = true; }
+  close() { this.closed = true; }
+}
+
+// Good
+class Server {
+  phase: "created" | "started" | "closed" = "created";
+  start() { this.phase = "started"; }
+  close() { this.phase = "closed"; }
+}
+```
+
+```ts
+// Bad
+export interface Job {
+  queued: boolean;
+  running: boolean;
+  done: boolean;
+  failed: boolean;
+}
+
+// Good
+export interface Job {
+  state: "queued" | "running" | "done" | "failed";
+}
+```
+
+The shapes: a class whose methods, the constructor aside, move two or more of its boolean fields at
+different times (a lifecycle held as flags), and an object holding a flag derived by `||` or `&&`
+from two of its own other fields (`{ either: h || v, horizontal: h, vertical: v }`), where the
+declared return type or the sources' comparisons say the fields are flags. Flags the same methods
+always move together (modifier keys copied off one event), fields only the constructor sets, and a
+default (`title || name`) are not reported.
+
+The count reads required `boolean` (or `true | false`, with `null` or `undefined` beside them)
+members of an interface, object type literal or class, a class field initialised to `true` or
+`false`, and the boolean `useState` cells of one function (React's and Preact's `useState(false)`
+or `useState<boolean>()`), and reports more than `max` of them. Optional members do not count: a
+record of `minify?`, `sourcemap?` is a set of independent settings. A member typed as one literal
+(`procedure: true`) is a brand and a `readonly` field given a literal is a constant, so neither
+counts. A class already reported as a lifecycle is not counted again. Declaration files (`.d.ts`)
+are not read.
+
+Options: `max` (booleans allowed on a record, default 3, as Clippy; `null` turns the record count
+off and leaves the two shapes), `params` (boolean parameters allowed on a function, default 3;
+`null` turns the function half off for a repository that already reports boolean parameters
+another way), and `ignore` (records, classes, components and functions the repository reads as
+settings rather than state, such as `TldrawOptions` or `*Props`; a derived flag is ignored by the
+function that builds its object; empty by default). The message names the record, so a hit can be
+copied into `ignore`.
+
 Every list option matches names, with `*` standing for any run of characters (`*Options`).
 
 ## The scan: `no-scattered-state-literals`
@@ -243,11 +280,20 @@ bun add -d oxlint@1.83.0 @oxlint/plugins@1.83.0
 bun add -d typescript5@npm:typescript@5.9.3   # only for the scan
 ```
 
-Then register the plugin. Start every rule at `warn`: each reports shapes that are sometimes
-deliberate, and the measured precision below is far from that of a type error. Raise a rule to
-`error` once its reports on your code have been read and found worth acting on.
+Then register the plugin. The simplest way is to extend one of the shipped configs, which loads the
+plugin and turns its tier's rules on at `warn`. In `.oxlintrc.json`:
 
-With `oxlint.config.ts`:
+```json
+{
+  "extends": ["./vendor/implicit-statescript/src/configs/recommended.json"]
+}
+```
+
+Extend `opinionated.json` instead to add `prefer-state-union`, and override a rule's options in your
+own `rules` as usual. Each config names the plugin relative to itself, so the vendored folder can sit
+anywhere.
+
+With `oxlint.config.ts`, register the plugin and the rules by hand:
 
 ```ts
 import { defineConfig } from "oxlint";
@@ -256,26 +302,17 @@ export default defineConfig({
   jsPlugins: [{ name: "implicit-state", specifier: "./vendor/implicit-statescript/src/index.ts" }],
   rules: {
     "implicit-state/no-coupled-flags": "warn",
-    "implicit-state/prefer-state-union": "warn",
     "implicit-state/no-marker-file-state": "warn",
     "implicit-state/no-age-based-lock": "warn",
+    // The opinionated tier:
+    // "implicit-state/prefer-state-union": ["warn", { "max": 3, "params": 3 }],
   },
 });
 ```
 
-With `.oxlintrc.json`:
-
-```json
-{
-  "jsPlugins": [{ "name": "implicit-state", "specifier": "./vendor/implicit-statescript/src/index.ts" }],
-  "rules": {
-    "implicit-state/no-coupled-flags": "warn",
-    "implicit-state/prefer-state-union": ["warn", { "max": 3, "params": 3 }],
-    "implicit-state/no-marker-file-state": "warn",
-    "implicit-state/no-age-based-lock": "warn"
-  }
-}
-```
+Keep every rule at `warn` at first: each reports shapes that are sometimes deliberate, and the
+measured precision below rests on small labelled counts. Raise a rule to `error` once its reports on
+your code have been read and found worth acting on.
 
 Both forms were run with Oxlint 1.83.0 over `examples/` from a vendored copy. The plugin is
 wrapped in `eslintCompatPlugin`, as anti-slop's is, but only Oxlint is tested.
@@ -323,7 +360,9 @@ read against the code and adopted or rejected as an owner would:
 | pnpm (`a0192007c`) | 2246 | 5.6 s | 46 | 8 of 11 `ignore` (one pattern narrowed), 0 of 2 `stateTypes`, 4 of 4 `owners` | 28 | 22 of 22 | 4 of 4 |
 | tldraw (`69f43954f`) | 2890 | 6.4 s | 33 | 11 of 12 `ignore`, 3 of 12 `stateTypes` | 25 | 10 of 11 (one borderline) | 3 of 3 |
 
-The judgements are one reader's, not an independent labelling. Where a proposal was wrong, it was
+The survey was measured before `prefer-state-union` read its two shapes and before the other rules
+were narrowed, so its hit counts are those of that version. The judgements are one reader's, not an
+independent labelling. Where a proposal was wrong, it was
 wrong in ways worth knowing: a record updated through a method that takes a `Partial` of it, which
 the checker without the library cannot trace, was proposed as settings; most `stateTypes` proposals
 on tldraw were kinds (an arrow's type, a dash style) whose "write" was an option passed through; and
@@ -337,79 +376,95 @@ records whose flags imply each other) and reported eleven sets of kinds as state
 
 ### The opinionated tier
 
-Adopting facts, then labelling a sample of the resulting hits and keeping a rule only where the
-labels show it is right at least half the time, is how a repository's opinionated tier is made: the
-same rules, narrowed or widened by facts true of that repository alone, with the labels kept beside
-the config so the choice can be measured again. `skills/tailor-implicit-statescript/SKILL.md` gives
-a coding agent the procedure: one proposal at a time, with the evidence and a recommendation, to
-the repository's owner. The generic tier stays what this package ships.
+The package ships an opinionated config with one rule, `prefer-state-union`, whose labelled hits
+on foreign code were right about half the time. A repository makes its own opinionated tier the same
+way: adopt facts, label a sample of the resulting hits, and keep a rule only where the labels show it
+is right at least half the time, with the labels kept beside the config so the choice can be
+measured again. `skills/tailor-implicit-statescript/SKILL.md` gives a coding agent the procedure:
+one proposal at a time, with the evidence and a recommendation, to the repository's owner. The
+recommended config stays generic.
 
 ## Measured precision
 
-The numbers come from an evaluation of the rules in the source project: a corpus of 365 labelled
-items over 127 source trees (the source project's head and 62 of its history trees, three foreign
-projects at fixed commits with the parents of commits that fixed an implicit state there, and 13
-synthetic mutants). Items were labelled from a manual review, from history (the tree before a fix
-is positive, the fix negative), from hand-written hard negatives, and by reading the code at every
-detector hit. The foreign projects are [excalidraw](https://github.com/excalidraw/excalidraw)
-(`701b901a0`), [vite](https://github.com/vitejs/vite) (`a579e352a`) and
-[changesets](https://github.com/changesets/changesets) (`2f6995d5b`).
+The numbers come from an evaluation of the rules in the source project, over two labelled corpora.
+The first holds 365 items over 127 source trees (the source project's head and 62 of its history
+trees, three foreign projects at fixed commits with the parents of commits that fixed an implicit
+state there, and 13 synthetic mutants). Its items were labelled from a manual review, from history
+(the tree before a fix is positive, the fix negative), from hand-written hard negatives, and by
+reading the code at every detector hit. Its foreign projects are
+[excalidraw](https://github.com/excalidraw/excalidraw) (`701b901a0`),
+[vite](https://github.com/vitejs/vite) (`a579e352a`) and
+[changesets](https://github.com/changesets/changesets) (`2f6995d5b`). The second holds 493 labelled
+items on eight foreign projects: excalidraw, vite, bullmq, hono, pnpm, rollup, tldraw and trpc.
 
-Recall is positive items of the rule's class that it reports; precision is hits on labelled items
-that were true. A history tree counts once, so a site unchanged across trees counts in each. A dash
-means no labelled item of that kind.
+Precision is the share of a rule's hits on labelled items that were true, pooled over both corpora;
+recall is the positive items of the rule's class that it reports. A history tree counts once, so a
+site unchanged across trees counts in each.
 
-| Rule | source project R / P | excalidraw R / P | vite R / P | changesets R / P | synthetic R |
-| --- | --- | --- | --- | --- | --- |
-| `prefer-state-union` | 5/7, 6/18 | 4/4, 6/17 | 4/5, 5/11 | -, 0/1 | 4/4 |
-| `no-marker-file-state` | 2/6, 2/2 | - | - | -, 0/1 | 1/1 |
-| `no-age-based-lock` | 2/3, 2/5 | - | 1/1, 1/1 | - | 1/1 |
-| `no-coupled-flags` | 0/3, - | 1/7, 1/1 | - | - | - |
-| `no-scattered-state-literals` (scan) | 4/10, 2/2 | 7/9, 7/8 | -, 0/1 | - | 1/3 |
+| Rule | Labelled hits true | Recall where measured |
+| --- | --- | --- |
+| `no-coupled-flags` | 7 of 8 | source project 1 of 3, excalidraw 2 of 7 |
+| `no-marker-file-state` | 3 of 4 | source project 2 of 6, synthetic 1 of 1 |
+| `no-age-based-lock` | 5 of 6 | source project 2 of 3, vite 1 of 1 |
+| `prefer-state-union`, the two shapes | 16 of 29, all on foreign code | excalidraw 3 of 4, vite 2 of 5, source project 0 of 7 |
+| `prefer-state-union`, the count | source project: 4 of 8 at more than two booleans, 1 of 5 at more than three | source project 3 of 7 at more than two |
+| `no-scattered-state-literals` (scan) | 9 of 11 | source project 4 of 10, excalidraw 7 of 9, synthetic 1 of 3 |
+
+These rest on small labelled counts: no rule has more than 29 judged hits, and the three
+recommended rules have eight or fewer each, so one hit more or less moves a figure by more than ten
+points. Read them as the order of magnitude, not as a rate to hold a rule to.
 
 How to read them:
 
-- **`no-scattered-state-literals`** is the strongest. Swept over every tree, at 2 other files it reads
-  recall 55% and precision 83%, and at 3 files 41% and 88%. The state-or-enumeration split is what
-  makes it usable: without it no threshold reached 80% precision (the best was 43%), and the split
-  removed six false hits and no true one. Known misses: a literal assigned through a local variable
-  before the field write, and a reply's discriminant (vite's fetch result type) read as a state.
-- **`no-coupled-flags`** hit no negative, but caught 1 of 10 labelled positives. A flag written as
-  a computed boolean (`isResizing: type !== "rotation"`) counts as set, so complementary pairs over
-  one discriminant are missed. It is safe at `warn` and quiet.
-- **`no-marker-file-state`** was right on 2 of 3 hits on real code. The false hit is a create-if-missing
-  set-up (changesets' `init`), which seeds each file only where it is missing and converges on a
-  rerun; excluding an existence test whose only branch writes the same path is the planned fix.
-- **`no-age-based-lock`** is experimental: 3 of 6 hits were true. The true hits delete or claim what the
-  old file guards; each false hit uses the age only to filter what a report shows. Requiring the
-  age test to guard a removal, a kill or a claim is the planned narrowing.
-- **`prefer-state-union`** is experimental: precision was 33% to 45% on every tree, and the sweep
-  reached 80% only at five booleans, with recall 10%. A count cannot tell a set of independent
-  options from a mode. Treat its reports as prompts to look, or raise `max`.
+- **`no-scattered-state-literals`** is the best measured. Swept over every tree, at 2 other files it
+  reads recall 55% and precision 83%, and at 3 files 41% and 88%. The state-or-enumeration split is
+  what makes it usable: without it no threshold reached 80% precision (the best was 43%), and the
+  split removed six false hits and no true one. Known misses: a literal assigned through a local
+  variable before the field write, and a reply's discriminant (vite's fetch result type) read as a
+  state.
+- **`no-coupled-flags`** caught 1 of 10 labelled positives while it counted only fields written
+  together three times; reading exclusive comparisons and opposite literals as one mode raised that
+  to 3 of 10 with no labelled negative hit in the first corpus. Its one false hit, in the second, is
+  a client that also sets one of the two fields on its own elsewhere. Most of the misses are out of reach of one file: a reset whose
+  mode shows in another file, or a type declaration.
+- **`no-marker-file-state`** lost its one false hit in the first corpus, a create-if-missing
+  set-up, once it skipped a check whose only branch creates the same file, and went from 3 of 8
+  labelled hits true to 3 of 4 once it required the module to write or remove the files it tests.
+  The files a module only probes (which lockfile a project has, which candidate source resolves)
+  were the false hits. The one left is a function that renames the executable it probes.
+- **`no-age-based-lock`** went from 2 of 5 hits true in the source project to 2 of 3 once it
+  required the function to delete, rename or signal; the hits it dropped compared an age only to
+  choose what a report prints.
+- **`prefer-state-union`** is opinionated. As a count of booleans, precision was 33% to 45% on
+  every tree at two or more, and no limit reached 80% without losing nearly all recall: a count
+  cannot tell a set of independent options from a mode. The two shapes do better, but large
+  classes keep unrelated latches that their methods also move at different times, and most of the 13
+  false hits among the 29 were such latches. It no longer counts a member typed as one literal
+  (a brand or a discriminant) or a `readonly` field given a literal (a constant), which removed
+  thirteen labelled negatives across hono, pnpm, rollup, tldraw and trpc with recall unchanged.
 
-Limits of these figures: foreign precision rests on at most about fifteen judged hits per rule per
-project, and most `prefer-state-union` hits on the foreign trees (108 on excalidraw's history, 49 on
-vite's) were never labelled, so its foreign precision is a sample. The rules were written against
-the source project, so its column is not a held-out measurement; the foreign columns are closer to
-one.
+Limits of these figures: beyond their small size, most `prefer-state-union` hits on the foreign
+trees of the first corpus (108 on excalidraw's history, 49 on vite's) were never labelled, so its
+foreign precision is a sample. The rules were written and narrowed against these corpora, so none
+of them is a held-out measurement; the figures say how the rules did on the code they were tuned on.
 
 ### Counts on other projects, unjudged
 
-For scale, the plugin and the scan at their defaults over the heads of other open-source
-TypeScript projects. These hits were counted, not read, so they say how much a rule reports, not
+For scale, every rule of the opinionated config and the scan at their defaults over the heads of
+other open-source TypeScript projects. These hits were counted, not read, so they say how much a rule reports, not
 how often it is right.
 
 | Project (commit) | files linted | no-coupled-flags | prefer-state-union | no-marker-file-state | no-age-based-lock | scan: state / enumeration |
 | --- | --- | --- | --- | --- | --- | --- |
-| excalidraw (`701b901a0`) | 723 | 1 | 12 | 0 | 0 | 7 / 2 |
-| vite (`a579e352a`) | 1681 | 0 | 1 | 0 | 1 | 1 / 1 |
-| changesets (`2f6995d5b`) | 166 | 0 | 0 | 1 | 0 | 0 / 0 |
-| bullmq (`b18b6ddd`) | 262 | 0 | 3 | 0 | 0 | 0 / 0 |
-| hono (`61f7c59e`) | 459 | 0 | 0 | 1 | 0 | 0 / 1 |
-| pnpm (`a0192007c`) | 2681 | 0 | 37 | 3 | 1 | 5 / 3 |
-| rollup (`f92bf715d`) | 13118 | 1 | 6 | 0 | 0 | 0 / 1 |
-| tldraw (`69f43954f`) | 2996 | 1 | 24 | 1 | 0 | 7 / 4 |
-| trpc (`8f4826679`) | 1160 | 1 | 0 | 0 | 0 | 1 / 0 |
+| excalidraw (`701b901a0`) | 723 | 3 | 15 | 0 | 0 | 7 / 2 |
+| vite (`a579e352a`) | 1681 | 2 | 3 | 0 | 1 | 1 / 1 |
+| changesets (`2f6995d5b`) | 166 | 0 | 0 | 0 | 0 | 0 / 0 |
+| bullmq (`b18b6ddd`) | 262 | 0 | 8 | 0 | 0 | 0 / 0 |
+| hono (`61f7c59e`) | 459 | 0 | 1 | 0 | 0 | 0 / 1 |
+| pnpm (`a0192007c`) | 2681 | 6 | 36 | 1 | 1 | 5 / 3 |
+| rollup (`f92bf715d`) | 13118 | 2 | 9 | 0 | 0 | 0 / 1 |
+| tldraw (`69f43954f`) | 2996 | 2 | 34 | 0 | 0 | 7 / 4 |
+| trpc (`8f4826679`) | 1160 | 1 | 1 | 0 | 0 | 1 / 0 |
 
 Linting took about a second or less for each project, and the scan at most two and a half
 seconds.
@@ -429,9 +484,10 @@ the plugin loaded. `test/examples.test.ts` lints every rule's `meta.docs.example
 README repeats, so the bad example must report and the good one must pass.
 
 `examples/` holds small programs that show each finding beside a near miss that passes. The
-plugin reports seven warnings there at its defaults (two `no-coupled-flags`, three
-`prefer-state-union`, one `no-marker-file-state`, one `no-age-based-lock`), six with
-`examples/tailored.oxlintrc.json`, and the scan one state spread (`examples/orders/`).
+recommended config reports four warnings there (two `no-coupled-flags`, one `no-marker-file-state`,
+one `no-age-based-lock`), the opinionated config seven (three more from `prefer-state-union`), and
+`examples/tailored.oxlintrc.json` six; the scan reports one state spread (`examples/orders/`).
+`test/plugin.test.ts` checks these counts.
 
 ## Licence
 

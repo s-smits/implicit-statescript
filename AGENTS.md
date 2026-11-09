@@ -7,6 +7,9 @@
   add no application-specific names, paths or exceptions. A list a rule needs is an option with a
   generic default, and `survey` (`src/scan/survey.ts`) proposes its values for one repository from
   syntax and types; a name may rank a proposal, never make one.
+- Place each rule in one tier: `src/configs/recommended.json` for rules whose labelled hits are
+  mostly true, `src/configs/opinionated.json` (which extends it) for a stance right about half
+  the time. `test/plugin.test.ts` checks the split and each config's count on `examples/`.
 - Use Oxlint's ESTree API for rules. The scan alone uses the TypeScript compiler API, through the
   `typescript5` alias.
 - Give each semantic change a case in the rule's `RuleTester` suite, with its nearest hostile
