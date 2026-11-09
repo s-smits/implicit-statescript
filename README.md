@@ -76,7 +76,9 @@ Not reported: a config object created whole and passed on, fields set together (
 reset that clears every field.
 
 Options: `fields` (least cluster size, default 2), `writes` (least co-writes of each pair, default
-3), `exclusive` (share of co-writes that must set at most one field, default 0.9).
+3), `exclusive` (share of co-writes that must set at most one field, default 0.9), and `setters`
+(functions and methods that write a state record from an object beside the `set*` convention,
+such as a store's `update` or an editor's `updateInstanceState`; empty by default).
 
 ### `prefer-state-union`
 
@@ -106,7 +108,9 @@ of independent settings. Declaration files (`.d.ts`) are not read.
 
 Options: `max` (booleans allowed on a record, default 3, as Clippy), `params` (boolean parameters
 allowed on a function, default 3; `null` turns the function half off for a repository that already
-reports boolean parameters another way).
+reports boolean parameters another way), and `ignore` (records, classes, components and functions
+the repository reads as settings rather than state, such as `TldrawOptions` or `*Props`; empty by
+default). The message names the record, so a hit can be copied into `ignore`.
 
 ### `no-marker-file-state`
 
@@ -133,6 +137,12 @@ or a local function whose body only returns one of those of its parameter. The f
 (`paths.lock`, `paths.report`), or a `const` bound to one of those. Not reported: a single guard
 (`if (!existsSync(dir)) mkdirSync(dir)`), files in two folders, one file checked twice.
 
+Options: `fsWrappers` (functions from another module that ask whether a path exists, such as a
+`hasMarker(dir, name)`; with two or more arguments the last is the file and the rest the folder),
+`stateDirs` (folders whose files are a process's state, such as `runDir`, matched against any
+identifier of the path; in one of those a single deciding check is reported), and `files` (distinct
+files of one folder that make a phase elsewhere, default 2). The lists are empty by default.
+
 ### `no-age-based-lock`
 
 A file's age compared with a constant guesses at its holder's state: a slow holder reads as a dead
@@ -156,6 +166,13 @@ Node's `fs.Stats` (`statSync`, `fs.promises.stat`, `lstat`, and the same through
 Node layers), read as `.mtimeMs`, `.mtime.getTime()`, `+stat.mtime` or `Number(stat.mtime)`, and
 Bun's `Bun.file(p).lastModified`. Not reported: "newer than" (`stat.mtimeMs > lastRun`, a cache
 question), an age that is printed, and an elapsed time that reads no file.
+
+Options: `fsWrappers` (functions from another module that return a file's time, such as
+`mtimeOf(path)`, so their result counts as a file time) and `processReaders` (functions that ask
+whether a process lives, such as `isAlive(pid)`; a function that calls one asks the holder, so its
+age test is a fallback and is not reported). Both are empty by default.
+
+Every list option matches names, with `*` standing for any run of characters (`*Options`).
 
 ## The scan: `no-scattered-state-literals`
 
@@ -183,9 +200,15 @@ no-scattered-state-literals (1)
       orders/list.ts:3
 ```
 
-Flags: `--readers <n>` (other files that must group a set, default 2), `--enumerations`, `--json`
-(an array of `{ rule, file, line, message, places }`), and `--error` (exit 1 on a state finding,
-for a gating check). Folders named `node_modules`, `dist`, `build`, `out`, `coverage`, `vendor`,
+Flags: `--readers <n>` (other files that must group a set, default 2), `--state-types <a,b>`
+(declared sets the repository holds to be states, such as `JobState` or `Task.status`: each is read
+as a state whatever its writes show, and reported from one reader on), `--owners <a,b>` (functions
+that already compute a grouping, such as `isTerminal`: a grouping inside one is no reader, and the
+same grouping spelled elsewhere is reported at the owner from one place on), `--config <file>` (an
+Oxlint config whose `settings["implicit-state"]` holds `readers`, `stateTypes` and `owners`, so the
+scan reads the same file as the rules; a flag beside it wins), `--enumerations`, `--json` (an array
+of `{ rule, file, line, message, places }`), and `--error` (exit 1 on a state finding, for a gating
+check). Folders named `node_modules`, `dist`, `build`, `out`, `coverage`, `vendor`,
 `vendored`, `third_party` or `generated`, and every dot folder, are skipped. The scan runs under
 Bun, which strips the types; it needs TypeScript 5 installed under the alias `typescript5`.
 
@@ -238,6 +261,68 @@ Both forms were run with Oxlint 1.83.0 over `examples/` from a vendored copy. Th
 wrapped in `eslintCompatPlugin`, as anti-slop's is, but only Oxlint is tested.
 
 `skills/install-implicit-statescript/SKILL.md` gives a coding agent the same steps.
+
+## Tailoring to one repository
+
+The rules are generic: they infer structure from syntax and name nothing of any one codebase. That
+is also their limit. Whether four booleans are a mode or four independent settings, whether a set of
+literals is a lifecycle or a list of kinds, and which local helper wraps `existsSync` are facts of
+one repository, and each is an option above. `survey` proposes them:
+
+```sh
+bun vendor/implicit-statescript/src/scan/cli.ts survey src   # --json for the report as data
+```
+
+It reads the tree's syntax and, where the question is about types, the TypeScript checker over the
+same files, and proposes:
+
+- for `prefer-state-union` `ignore`, a record with more than three required booleans none of which
+  is written in an update the checker traces to it (read once set, as settings are), and a
+  `*Suffix` pattern where three or more such records share a last word;
+- for `no-coupled-flags` `setters`, a function or method outside `set*` whose callers discard its
+  result and hand it objects whose flags change from call to call;
+- for `no-marker-file-state` `fsWrappers` and `no-age-based-lock` `fsWrappers` and
+  `processReaders`, a short function that forwards its parameter to the platform and hands back the
+  answer, called from its own file or from files that import it; `stateDirs`, a folder holding a
+  file written as JSON and read back;
+- for the scan's `stateTypes`, an exported set of literals written in an update and grouped by hand
+  in other files, and for `owners`, an exported function typed as returning a boolean or literal
+  union that groups a parameter's field which other places spell again by hand.
+
+A name (`*State`, `isFile`, `update*`) only ranks a proposal; it never makes one. Each proposal comes
+with its evidence (file and line) and the hits adopting it would add or remove, measured by running
+the rules and the scan both ways, and the report ends with a config fragment adopting every
+proposal that changes a hit. Wrappers of `git` and helpers named as locks are noted, since no option
+reads them.
+
+The survey proposes; it does not decide. On two projects of different kinds, with every proposal
+read against the code and adopted or rejected as an owner would:
+
+| Project (commit) | files | survey | hits at defaults | adopted | hits after | removed hits judged false | added hits judged true |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| pnpm (`a0192007c`) | 2246 | 5.6 s | 46 | 8 of 11 `ignore` (one pattern narrowed), 0 of 2 `stateTypes`, 4 of 4 `owners` | 28 | 22 of 22 | 4 of 4 |
+| tldraw (`69f43954f`) | 2890 | 6.4 s | 33 | 11 of 12 `ignore`, 3 of 12 `stateTypes` | 25 | 10 of 11 (one borderline) | 3 of 3 |
+
+The judgements are one reader's, not an independent labelling. Where a proposal was wrong, it was
+wrong in ways worth knowing: a record updated through a method that takes a `Partial` of it, which
+the checker without the library cannot trace, was proposed as settings; most `stateTypes` proposals
+on tldraw were kinds (an arrow's type, a dash style) whose "write" was an option passed through; and
+the four `owners` hits on pnpm were true duplicates of a grouping but group error codes, not states.
+Adopted unread, the proposals would also have silenced hits judged true (on tldraw a licence record
+beside an existing state union; on pnpm a context whose lockfile flags are one state and three plan
+records whose flags imply each other) and reported eleven sets of kinds as states. Read each one.
+
+`examples/export.ts` holds a settings record the rule reports at its defaults, and
+`examples/tailored.oxlintrc.json` adopts the survey's proposal for it.
+
+### The opinionated tier
+
+Adopting facts, then labelling a sample of the resulting hits and keeping a rule only where the
+labels show it is right at least half the time, is how a repository's opinionated tier is made: the
+same rules, narrowed or widened by facts true of that repository alone, with the labels kept beside
+the config so the choice can be measured again. `skills/tailor-implicit-statescript/SKILL.md` gives
+a coding agent the procedure: one proposal at a time, with the evidence and a recommendation, to
+the repository's owner. The generic tier stays what this package ships.
 
 ## Measured precision
 
@@ -324,8 +409,9 @@ the plugin loaded. `test/examples.test.ts` lints every rule's `meta.docs.example
 README repeats, so the bad example must report and the good one must pass.
 
 `examples/` holds small programs that show each finding beside a near miss that passes. The
-plugin reports six warnings there (two `no-coupled-flags`, two `prefer-state-union`, one
-`no-marker-file-state`, one `no-age-based-lock`) and the scan one state spread (`examples/orders/`).
+plugin reports seven warnings there at its defaults (two `no-coupled-flags`, three
+`prefer-state-union`, one `no-marker-file-state`, one `no-age-based-lock`), six with
+`examples/tailored.oxlintrc.json`, and the scan one state spread (`examples/orders/`).
 
 ## Licence
 

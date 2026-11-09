@@ -21,7 +21,11 @@ description: Vendor the implicit-statescript Oxlint plugin into a TypeScript rep
    word.
 5. Optionally run the scan, which needs Bun:
    `bun vendor/implicit-statescript/src/scan/cli.ts scan <src folder>`. Add `--error` to gate on it
-   in CI.
+   in CI, and `--config <the Oxlint config>` once it holds `settings["implicit-state"]`.
+6. Where the rules report settings records as states, or miss a helper the repository wraps the
+   file system in, offer to tailor them: `tailor-implicit-statescript` runs
+   `bun vendor/implicit-statescript/src/scan/cli.ts survey <src folder>` and adopts its proposals
+   as options one at a time, on the owner's word.
 
 Each rule has no automatic fix. Where the owner asks for one, name the states in one union or
 field, give it one owner that moves between them, and replace the flags, marker files or hand

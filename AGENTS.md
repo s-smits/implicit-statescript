@@ -5,7 +5,8 @@
 - `examples/` holds small programs the README's counts are read from; change the README with them.
 - Keep every rule generic: infer structure from the syntax, recognise the platform's own APIs, and
   add no application-specific names, paths or exceptions. A list a rule needs is an option with a
-  generic default.
+  generic default, and `survey` (`src/scan/survey.ts`) proposes its values for one repository from
+  syntax and types; a name may rank a proposal, never make one.
 - Use Oxlint's ESTree API for rules. The scan alone uses the TypeScript compiler API, through the
   `typescript5` alias.
 - Give each semantic change a case in the rule's `RuleTester` suite, with its nearest hostile
