@@ -47,6 +47,9 @@ export function setterState(name: string | null): string | null {
   return word === undefined ? null : `${word.charAt(0).toLowerCase()}${word.slice(1)}`;
 }
 
+/** A name in the convention for a module constant, `STALE_MS`. */
+export const CONSTANT_NAME = /^[A-Z][A-Z0-9_]*$/u;
+
 /** Whether the file belongs to a test suite rather than to the product. */
 export function isTestPath(filename: string): boolean {
   return TEST_PATH.test(filename.replaceAll("\\", "/"));

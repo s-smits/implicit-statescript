@@ -178,6 +178,12 @@ export function clearOnce(store: { open: boolean; dirty: boolean }) {
 }`,
     },
     {
+      name: "equalities to two names can both hold where the names hold one value",
+      code: `export function rows(items: string[], start: number, end: number) {
+  return items.map((item, i) => ({ item, isFirst: i === start, isLast: i === end }));
+}`,
+    },
+    {
       name: "opposite literals that are both true in another object show no mode",
       code: `export function marks(digest: string) {
   return [
@@ -231,6 +237,21 @@ export function rest(tool: { isResizing: boolean; isRotating: boolean }) {
   tool.isRotating = false;
 }`,
       errors: [{ ...mode, line: 2 }],
+    },
+    {
+      name: "equalities to two constants or enum members are exclusive",
+      code: `const FILE = "file";
+const DIR = "dir";
+enum Kind { File, Dir }
+export function kinds(name: string, kind: Kind) {
+  const one = { isFile: name === FILE, isDir: name === DIR };
+  const two = { isFile: kind === Kind.File, isDir: kind === Kind.Dir };
+  return [one, two];
+}`,
+      errors: [
+        { messageId: "exclusive", line: 5 },
+        { messageId: "exclusive", line: 6 },
+      ],
     },
     {
       name: "setters names a repository's own writer, by name or pattern",

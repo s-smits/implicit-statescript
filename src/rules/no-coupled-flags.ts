@@ -1,5 +1,6 @@
 import { defineRule, type ESTree } from "@oxlint/plugins";
 import {
+  CONSTANT_NAME,
   everyStatementList,
   identifierName,
   innermost,
@@ -52,8 +53,9 @@ import {
  * straight to a call.
  *
  * Not reported: an object created whole and passed on (a config, whose options are independent
- * choices), fields set together (`{ x, y }`), comparisons of two different subjects, and a reset
- * that clears every field, which on its own shows no mode. Test files are not read.
+ * choices), fields set together (`{ x, y }`), comparisons of two different subjects, equalities
+ * to two names that can hold one value (`i === start` beside `i === end`), and a reset that clears
+ * every field, which on its own shows no mode. Test files are not read.
  *
  * `setters` names the functions and methods that write a state record from an object beside the
  * `set*` convention (a store's `update`, an editor's `updateInstanceState`), by name with `*` for
@@ -76,10 +78,12 @@ interface CoWrite {
   node: ESTree.Node;
 }
 
-/** One comparison a condition makes: its subject, the value it is held to, and whether equal. */
+/** One comparison a condition makes: its subject, the value it is held to, whether that value is
+ *  fixed when the code is written, and whether equal. */
 interface Comparison {
   subject: string;
   against: string;
+  fixed: boolean;
   equal: boolean;
 }
 
@@ -107,6 +111,19 @@ function valueOf(node: ESTree.Node): Value {
   return cleared ? "clear" : "set";
 }
 
+/** Whether a compared value is fixed when the code is written: a literal, a constant's name
+ *  (`SOURCE_PHASE`) or a member of a capitalised enum or namespace (`Kind.File`). */
+function fixedValue(node: ESTree.Node): boolean {
+  const bare = innermost(node);
+  if (bare.type === "Identifier") {
+    return CONSTANT_NAME.test(bare.name);
+  }
+  if (bare.type === "MemberExpression") {
+    return !bare.computed && /^[A-Z]/u.test(identifierName(innermost(bare.object)) ?? "");
+  }
+  return bare.type === "Literal" || (bare.type === "TemplateLiteral" && bare.expressions.length === 0);
+}
+
 /** The comparisons a condition joins with `&&`: `t && t !== "r"` makes one, `t !== "r"`. */
 function comparisonsOf(node: ESTree.Node, text: (node: ESTree.Node) => string): Comparison[] {
   const bare = innermost(node);
@@ -119,7 +136,7 @@ function comparisonsOf(node: ESTree.Node, text: (node: ESTree.Node) => string): 
     return [];
   }
   const [subject, against] = bare.left.type === "Literal" ? [bare.right, bare.left] : [bare.left, bare.right];
-  return [{ subject: text(subject), against: text(against), equal }];
+  return [{ subject: text(subject), against: text(against), fixed: fixedValue(against), equal }];
 }
 
 /** The first pair of fields whose values cannot both hold, with the subject they compare. */
@@ -131,12 +148,15 @@ function exclusivePair(
   for (const [index, [a, ofA]] of tests.entries()) {
     for (const [b, ofB] of tests.slice(index + 1)) {
       // Two comparisons of one subject exclude each other: `x === k` and `x !== k`, or `x === a`
-      // and `x === b` for two literals.
+      // and `x === b` for two fixed values. Two variables (`i === start`, `i === end`) can hold one
+      // value, so equalities to them can both hold.
       const clash = ofA.find((one) =>
         ofB.some(
           (other) =>
             one.subject === other.subject &&
-            (one.against === other.against ? one.equal !== other.equal : one.equal && other.equal),
+            (one.against === other.against
+              ? one.equal !== other.equal
+              : one.equal && other.equal && one.fixed && other.fixed),
         ),
       );
       if (clash !== undefined) {

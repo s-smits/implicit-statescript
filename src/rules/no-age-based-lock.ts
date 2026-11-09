@@ -1,5 +1,5 @@
 import { defineRule, type ESTree } from "@oxlint/plugins";
-import { calleeName, declaredBy, enclosingFunction, innermost, isTestPath, memberObject } from "../shared/syntax.ts";
+import { CONSTANT_NAME, calleeName, declaredBy, enclosingFunction, innermost, isTestPath, memberObject } from "../shared/syntax.ts";
 import { asRecord, NAMES_SCHEMA, nameMatcher, type RuleExample } from "../shared/values.ts";
 
 /**
@@ -50,8 +50,6 @@ const TAKEOVERS = new Set([
   "kill",
 ]);
 const RELATIONS = new Set(["<", "<=", ">", ">="]);
-/** A name in the convention for a module constant, `STALE_MS`, or a member of one, `LIMITS.wall`. */
-const CONSTANT_NAME = /^[A-Z][A-Z0-9_]*$/u;
 
 /** Whether an expression reads a file's modification or change time, by the platform's name or
  *  through a function the repository names (`fsWrappers`). */

@@ -88,7 +88,8 @@ conjunct by conjunct) are reported at that object. Two fields written as opposit
 objects of one file (`{ imported: true, frozen: false }` and the reverse) and never both `true` are
 reported at the first such object, unless the objects are handed straight to a call, as options
 are. Not reported: a config object created whole and passed on, fields set together (`{ x, y }`),
-comparisons of two different subjects, and a reset that clears every field.
+comparisons of two different subjects, equalities to two names that can hold one value
+(`isFirst: i === start` beside `isLast: i === end`), and a reset that clears every field.
 
 Options: `fields` (least cluster size, default 2), `writes` (least co-writes of each pair, default
 3), `exclusive` (share of co-writes that must set at most one field, default 0.9), and `setters`
