@@ -427,7 +427,7 @@ function restated(groupings: readonly Grouping[], isOwner: (name: string) => boo
         kind: "no-scattered-state-literals" as const,
         path: owner.path,
         line: owner.line,
-        detail: `\`${owner.within ?? ""}\` already groups ${quoted(owner.values)} over \`${lastWord(owner.subject)}\`, and ${String(copies.length)} other places group the same by hand: call it`,
+        detail: `\`${owner.within ?? ""}\` already groups ${quoted(owner.values)} over \`${lastWord(owner.subject)}\`, and ${copies.length === 1 ? "1 other place groups" : `${String(copies.length)} other places group`} the same by hand: call it`,
         places: [owner, ...copies].map((one) => ({ path: one.path, line: one.line })),
       },
     ];
@@ -480,7 +480,7 @@ export function scatteredLiterals(files: ReadonlyMap<string, string>, options: S
       kind: "no-scattered-state-literals",
       path: owner.path,
       line: owner.line,
-      detail: `\`${owner.name}\` (${quoted(owner.values)}) is grouped by hand in ${readerFiles.size} other files, as ${[...sets].join("; ")}: give each grouping a name in the owner and call it`,
+      detail: `\`${owner.name}\` (${quoted(owner.values)}) is grouped by hand in ${readerFiles.size === 1 ? "1 other file" : `${String(readerFiles.size)} other files`}, as ${[...sets].join("; ")}: give each grouping a name in the owner and call it`,
       places: [owner, ...groupedBy].map((one) => ({ path: one.path, line: one.line })),
     };
     found.push({ row, set: { values: owner.values, subjects: groupedBy.map((one) => one.subject) }, named });
