@@ -20,28 +20,43 @@ export function expired(started: number, limit: number): boolean {
 export function old(file: string, days: number): boolean {
   return Date.now() - statSync(file).mtimeMs > days * 86_400_000;
 }
+export function recent(files: readonly string[]): string[] {
+  return files.filter((file) => Date.now() - statSync(file).mtimeMs < STALE_MS);
+}
+export function lapsed(lock: string): boolean {
+  return Date.now() - statSync(lock).mtimeMs > STALE_MS;
+}
+export function takeOver(lock: string, holder: number): void {
+  const release = (): void => rmSync(lock);
+  try {
+    if (statSync(lock).mtimeMs < Date.now() - STALE_MS) throw new Error("stale");
+  } catch {
+    release();
+  }
+  if (Date.now() - statSync(lock).mtimeMs > STALE_MS) process.kill(holder);
+}
 `;
 
 tester.run("implicit-state/no-age-based-lock", noAgeBasedLockRule, {
   valid: [
     {
       name: "a file time against another timestamp asks newer-than, a cache question",
-      code: `import { statSync } from "node:fs";
-export function newer(file: string, lastRun: number): boolean {
-  return statSync(file).mtimeMs > lastRun;
+      code: `import { rmSync, statSync } from "node:fs";
+export function refresh(file: string, lastRun: number): void {
+  if (statSync(file).mtimeMs > lastRun) rmSync(file);
 }`,
     },
     {
       name: "an elapsed time that reads no file",
-      code: `export function expired(started: number, limit: number): boolean {
-  return Date.now() - started > limit;
+      code: `export function expired(started: number, limit: number, holder: number): void {
+  if (Date.now() - started > limit) process.kill(holder);
 }`,
     },
     {
       name: "a window the caller passes is a question the caller asks",
-      code: `import { statSync } from "node:fs";
-export function old(file: string, days: number): boolean {
-  return Date.now() - statSync(file).mtimeMs > days * 86_400_000;
+      code: `import { rmSync, statSync } from "node:fs";
+export function prune(file: string, days: number): void {
+  if (Date.now() - statSync(file).mtimeMs > days * 86_400_000) rmSync(file);
 }`,
     },
     {
@@ -51,9 +66,33 @@ export const ageOf = (file: string): number => Date.now() - statSync(file).mtime
     },
     {
       name: "a file time read through another module's function is unknown by default",
-      code: `import { mtimeOf } from "./fs.ts";
+      code: `import { rmSync } from "node:fs";
+import { mtimeOf } from "./fs.ts";
 const STALE_MS = 60_000;
-export const stale = (lock: string) => Date.now() - mtimeOf(lock) > STALE_MS;`,
+export const clear = (lock: string) => Date.now() - mtimeOf(lock) > STALE_MS && rmSync(lock);`,
+    },
+    {
+      name: "an age that only selects what a report shows takes nothing over",
+      code: `import { statSync } from "node:fs";
+const RECENT_MS = 60_000;
+export function recent(files: readonly string[]): string[] {
+  return files.filter((file) => Date.now() - statSync(file).mtimeMs < RECENT_MS);
+}`,
+    },
+    {
+      name: "an age test in a function that deletes, renames and signals nothing",
+      code: `import { statSync } from "node:fs";
+const STALE_MS = 60_000;
+export function lapsed(lock: string): boolean {
+  return Date.now() - statSync(lock).mtimeMs > STALE_MS;
+}`,
+    },
+    {
+      name: "a removal in another function does not reach an age that function never calls",
+      code: `import { rmSync, statSync } from "node:fs";
+const STALE_MS = 60_000;
+export const lapsed = (lock: string) => Date.now() - statSync(lock).mtimeMs > STALE_MS;
+export const release = (lock: string) => rmSync(lock);`,
     },
     {
       name: "processReaders: a function that asks whether the holder lives uses the age as a fallback",
@@ -69,42 +108,67 @@ export function clear(lock: string): void {
     {
       name: "a test file is not read",
       filename: "src/locks.test.ts",
-      code: `import { statSync } from "node:fs";
+      code: `import { rmSync, statSync } from "node:fs";
 const STALE_MS = 60_000;
-export const stale = (lock: string) => Date.now() - statSync(lock).mtimeMs > STALE_MS;`,
+export const clear = (lock: string) => Date.now() - statSync(lock).mtimeMs > STALE_MS && rmSync(lock);`,
     },
   ],
   invalid: [
     {
-      name: "the whole fixture reports the age and its mirror, and nothing else",
+      name: "the whole fixture reports each age a removal or a signal follows, and nothing else",
       filename: "src/locks.ts",
       code: LOCKS,
       errors: [
         { ...age, line: 4 },
         { ...age, line: 5 },
+        { ...age, line: 25 },
+        { ...age, line: 29 },
       ],
     },
     {
-      name: "Bun's lastModified against a constant whatever its name",
-      code: `const limit = 30 * 1000;
-export async function stale(lock: string): Promise<boolean> {
-  return Date.now() - Bun.file(lock).lastModified > limit;
+      name: "a removal through a function of this file that deletes the lock",
+      code: `import { statSync, unlinkSync } from "node:fs";
+const STALE_MS = 60_000;
+function release(lock: string): void {
+  unlinkSync(lock);
+}
+export function claim(lock: string): void {
+  if (Date.now() - statSync(lock).mtimeMs > STALE_MS) release(lock);
 }`,
-      errors: [{ ...age, line: 3 }],
+      errors: [{ ...age, line: 7 }],
+    },
+    {
+      name: "a module-level age beside a module-level rename",
+      code: `import { renameSync, statSync } from "node:fs";
+const STALE_MS = 60_000;
+const lock = "run.lock";
+if (Date.now() - statSync(lock).mtimeMs > STALE_MS) renameSync(lock, "run.lock.old");`,
+      errors: [{ ...age, line: 4 }],
+    },
+    {
+      name: "Bun's lastModified against a constant whatever its name",
+      code: `import { rm } from "node:fs/promises";
+const limit = 30 * 1000;
+export async function clear(lock: string): Promise<void> {
+  if (Date.now() - Bun.file(lock).lastModified > limit) await rm(lock);
+}`,
+      errors: [{ ...age, line: 4 }],
     },
     {
       name: "a Date read of mtime through getTime",
       code: `import { statSync } from "node:fs";
-export const stale = (lock: string) => Date.now() - statSync(lock).mtime.getTime() >= 5_000;`,
-      errors: [{ ...age, line: 2 }],
+export const clear = (lock: string, holder: number) =>
+  Date.now() - statSync(lock).mtime.getTime() >= 5_000 && process.kill(holder);`,
+      errors: [{ ...age, line: 3 }],
     },
     {
       name: "fsWrappers names a function that returns a file's time",
-      code: `import { mtimeOf } from "./fs.ts";
+      code: `import { rmSync } from "node:fs";
+import { mtimeOf } from "./fs.ts";
 const STALE_MS = 60_000;
-export const stale = (lock: string) => Date.now() - mtimeOf(lock) > STALE_MS;`,
+export const clear = (lock: string) => Date.now() - mtimeOf(lock) > STALE_MS && rmSync(lock);`,
       options: [{ fsWrappers: ["mtimeOf"] }],
-      errors: [{ ...age, line: 3 }],
+      errors: [{ ...age, line: 4 }],
     },
     {
       name: "the same age test is reported where no process reader is named",

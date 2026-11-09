@@ -14,14 +14,19 @@ import { asRecord, NAMES_SCHEMA, nameMatcher, type RuleExample } from "../shared
  * Reported: a relational comparison (`<`, `<=`, `>`, `>=`) one of whose operands is a difference
  * whose subtrahend reads a file time (`.mtimeMs`, `.ctimeMs`, `.mtime.getTime()`, `+stat.mtime`,
  * `Number(stat.mtime)`), or which compares a file time with a difference (`stat.mtimeMs < now -
- * STALE`). The field is read by its platform name, whatever produced the object: `mtimeMs`,
- * `ctimeMs`, `mtime` and `ctime` of Node's `fs.Stats` (`statSync`, `fs.promises.stat`, `lstat`, the
- * same in Bun and Deno's Node layer) and Bun's `Bun.file(p).lastModified`.
+ * STALE`), in a function that takes something over on the strength of it: it deletes, renames or
+ * signals (`rm`, `unlink`, `rmdir`, `remove`, `rename`, `kill`, each in its sync form too, by any
+ * receiver), directly or through a function of this file whose body does. The field is read by its
+ * platform name, whatever produced the object: `mtimeMs`, `ctimeMs`, `mtime` and `ctime` of Node's
+ * `fs.Stats` (`statSync`, `fs.promises.stat`, `lstat`, the same in Bun and Deno's Node layer) and
+ * Bun's `Bun.file(p).lastModified`.
  *
- * Not reported: a file time compared with another timestamp and no difference (`stat.mtimeMs >
- * lastRun`, which asks "newer than", a cache question), an age printed rather than compared, and
- * an elapsed time that reads no file (`Date.now() - started > limit`). Tests are not read. There is
- * no fix: the owner of the holder's state is a design choice.
+ * Not reported: an age that only selects what a report shows or a cache keeps (`files.filter((f)
+ * => now - statSync(f).mtimeMs < RECENT)`), since no holder loses anything by it; a file time
+ * compared with another timestamp and no difference (`stat.mtimeMs > lastRun`, which asks "newer
+ * than", a cache question); an age printed rather than compared; and an elapsed time that reads no
+ * file (`Date.now() - started > limit`). Tests are not read. There is no fix: the owner of the
+ * holder's state is a design choice.
  *
  * Two options carry what one repository knows, both empty by default, by name with `*` for any run
  * of characters. `fsWrappers` names the functions that return a file's time from another module
@@ -30,6 +35,20 @@ import { asRecord, NAMES_SCHEMA, nameMatcher, type RuleExample } from "../shared
  * function that calls one asks the holder, and its age test is a fallback rather than the guess.
  */
 const FILE_TIMES = new Set(["mtimeMs", "ctimeMs", "mtime", "ctime", "lastModified"]);
+/** Calls that take over what an old file guards: delete it, move it aside, or signal its holder. */
+const TAKEOVERS = new Set([
+  "rm",
+  "rmSync",
+  "unlink",
+  "unlinkSync",
+  "rmdir",
+  "rmdirSync",
+  "remove",
+  "removeSync",
+  "rename",
+  "renameSync",
+  "kill",
+]);
 const RELATIONS = new Set(["<", "<=", ">", ">="]);
 /** A name in the convention for a module constant, `STALE_MS`, or a member of one, `LIMITS.wall`. */
 const CONSTANT_NAME = /^[A-Z][A-Z0-9_]*$/u;
@@ -114,32 +133,51 @@ export const noAgeBasedLockRule = defineRule({
   createOnce(context) {
     /** Module constants bound to a number, whatever their names. */
     const constants = new Set<string>();
-    /** Each age test found, and the functions (or the file) that ask a process reader. */
-    const ages: ESTree.BinaryExpression[] = [];
-    const asking = new Set<ESTree.Node>();
+    /** Each function (or the module, as null) with the names it calls, and the ages it compares. */
+    const calls = new Map<ESTree.Node | null, Set<string>>();
+    const ages = new Map<ESTree.Node | null, ESTree.Node[]>();
+    /** The functions of this file by the name they are bound to. */
+    const named = new Map<string, ESTree.Node>();
     let wrappers = nameMatcher(undefined);
     let readers = nameMatcher(undefined);
+    /** Whether a function takes over: it calls a takeover, or a function of this file that does. */
+    const takesOver = (fn: ESTree.Node | null, seen = new Set<ESTree.Node | null>()): boolean => {
+      seen.add(fn);
+      return [...(calls.get(fn) ?? [])].some((name) => {
+        const local = named.get(name);
+        return TAKEOVERS.has(name) || (local !== undefined && !seen.has(local) && takesOver(local, seen));
+      });
+    };
     return {
       before: () => {
         const option = asRecord(context.options[0]) ?? {};
         wrappers = nameMatcher(option.fsWrappers);
         readers = nameMatcher(option.processReaders);
         constants.clear();
-        ages.length = 0;
-        asking.clear();
+        calls.clear();
+        ages.clear();
+        named.clear();
         return !isTestPath(context.filename);
       },
-      CallExpression(node) {
+      FunctionDeclaration: (node) => {
+        if (node.id !== null) named.set(node.id.name, node);
+      },
+      VariableDeclarator: (node) => {
+        const init = node.init;
+        const fn = init?.type === "ArrowFunctionExpression" || init?.type === "FunctionExpression";
+        if (node.id.type === "Identifier" && init !== null && fn) named.set(node.id.name, init);
+      },
+      CallExpression: (node) => {
         const name = calleeName(node);
-        if (name !== null && readers(name)) {
-          asking.add(enclosingFunction(node) ?? context.sourceCode.ast);
-        }
+        if (name === null) return;
+        const owner = enclosingFunction(node);
+        calls.set(owner, (calls.get(owner) ?? new Set<string>()).add(name));
       },
       "Program:exit": () => {
-        for (const node of ages) {
-          if (!asking.has(enclosingFunction(node) ?? context.sourceCode.ast)) {
-            context.report({ node, messageId: "age" });
-          }
+        for (const [owner, found] of ages) {
+          const called = [...(calls.get(owner) ?? [])];
+          if (!takesOver(owner) || called.some(readers)) continue;
+          for (const node of found) context.report({ node, messageId: "age" });
         }
       },
       Program: (program) => {
@@ -172,7 +210,8 @@ export const noAgeBasedLockRule = defineRule({
         };
         const against = window(left, right) || window(right, left);
         if (aged || against) {
-          ages.push(node);
+          const owner = enclosingFunction(node);
+          ages.set(owner, [...(ages.get(owner) ?? []), node]);
         }
       },
     };

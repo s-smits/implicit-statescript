@@ -161,11 +161,15 @@ writeFileSync(lock, String(pid), { flag: "wx" });
 ```
 
 Reported: a `<`, `<=`, `>` or `>=` comparison with a difference whose subtrahend is a file time, or
-a file time compared with a difference. File times are `mtimeMs`, `ctimeMs`, `mtime` and `ctime` of
-Node's `fs.Stats` (`statSync`, `fs.promises.stat`, `lstat`, and the same through Bun's and Deno's
-Node layers), read as `.mtimeMs`, `.mtime.getTime()`, `+stat.mtime` or `Number(stat.mtime)`, and
-Bun's `Bun.file(p).lastModified`. Not reported: "newer than" (`stat.mtimeMs > lastRun`, a cache
-question), an age that is printed, and an elapsed time that reads no file.
+a file time compared with a difference, in a function that takes something over on the strength of
+it: it deletes, renames or signals (`rm`, `unlink`, `rmdir`, `remove`, `rename`, `kill`, each in
+its sync form too), directly or through a function of the same file that does. File times are
+`mtimeMs`, `ctimeMs`, `mtime` and `ctime` of Node's `fs.Stats` (`statSync`, `fs.promises.stat`,
+`lstat`, and the same through Bun's and Deno's Node layers), read as `.mtimeMs`,
+`.mtime.getTime()`, `+stat.mtime` or `Number(stat.mtime)`, and Bun's `Bun.file(p).lastModified`.
+Not reported: an age that only selects what a report shows or a cache keeps (`files.filter((f) =>
+now - statSync(f).mtimeMs < RECENT)`), "newer than" (`stat.mtimeMs > lastRun`, a cache question),
+an age that is printed, and an elapsed time that reads no file.
 
 Options: `fsWrappers` (functions from another module that return a file's time, such as
 `mtimeOf(path)`, so their result counts as a file time) and `processReaders` (functions that ask

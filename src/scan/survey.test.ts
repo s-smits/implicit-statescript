@@ -50,7 +50,7 @@ export const notes = (runDir: string): string => (isDir(runDir) ? textOf(join(ru
   "src/lock.ts": `import { readFileSync, rmSync, statSync } from "node:fs";
 import { isAlive, mtimeOf } from "./fs.ts";
 const STALE_MS = 60_000;
-export const stale = (lock: string): boolean => Date.now() - mtimeOf(lock) > STALE_MS;
+export const clearStale = (lock: string): void => Date.now() - mtimeOf(lock) > STALE_MS && rmSync(lock);
 export function clear(lock: string): void {
   const holder = Number(readFileSync(lock, "utf8"));
   if (!isAlive(holder) && Date.now() - statSync(lock).mtimeMs > STALE_MS) rmSync(lock);
