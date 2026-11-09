@@ -189,6 +189,17 @@ export async function phaseOf(dir: string) {
       errors: [{ ...phase, line: 7 }],
     },
     {
+      name: "a local wrapper of Bun.file(p).exists()",
+      code: `import { join } from "node:path";
+export const finish = (dir: string) => Bun.write(join(dir, "done.json"), "");
+const present = (p: string) => Bun.file(p).exists();
+export async function phaseOf(dir: string) {
+  if (await present(join(dir, "done.json"))) return "done";
+  return (await present(join(dir, "lock"))) ? "running" : "idle";
+}`,
+      errors: [{ ...phase, line: 6 }],
+    },
+    {
       name: "fsWrappers names an existence check from another module",
       code: IMPORTED,
       options: [{ fsWrappers: ["isFile"] }],

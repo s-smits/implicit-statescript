@@ -162,14 +162,8 @@ export const noMarkerFileStateRule = defineRule({
       if (call?.type !== "CallExpression") {
         return;
       }
-      const name0 = calleeName(call);
-      const first = call.arguments[0];
-      if (
-        name0 !== null &&
-        EXISTS.has(name0) &&
-        first?.type === "Identifier" &&
-        first.name === parameter.name
-      ) {
+      const checked = existence(call);
+      if (checked?.type === "Identifier" && checked.name === parameter.name) {
         wrappers.add(name);
       }
     }
