@@ -1,6 +1,7 @@
 /**
  * The survey over one small tree that holds each fact it proposes once, beside the nearest case it
- * must not propose: a record whose flags are written, a wrapper nobody else calls, a call whose
+ * must not propose: a record whose flags are written, records whose booleans are brands or
+ * constants the rule does not count (`Procedure`, `Cluster`), a wrapper nobody else calls, a call whose
  * result is used, a reader that checks a path before reading it (`textOf`), and a wrapper whose name
  * another function also declares (`isDir`). The command runs once, end to end, to show what
  * adopting each fact changes.
@@ -77,6 +78,18 @@ export interface Job {
 }
 export function finishJob(job: Job): void {
   job.done = true;
+}
+export interface Procedure {
+  procedure: true;
+  query: false;
+  subscription: false;
+  mutation: boolean;
+}
+export class Cluster {
+  readonly isCluster = false;
+  readonly isNode = true;
+  readonly isLeaf = false;
+  ready = false;
 }
 `,
   "src/state.ts": `import { existsSync, readFileSync, writeFileSync } from "node:fs";

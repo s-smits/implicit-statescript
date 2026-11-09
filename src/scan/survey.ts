@@ -364,8 +364,12 @@ function flagAnnotation(type: ts.TypeNode | undefined): boolean {
   if (type === undefined) {
     return false;
   }
-  const parts = ts.isUnionTypeNode(type) ? type.types : [type];
-  const kept = parts.filter((one) => one.kind !== ts.SyntaxKind.UndefinedKeyword && !(ts.isLiteralTypeNode(one) && one.literal.kind === ts.SyntaxKind.NullKeyword));
+  // One literal alone (`ready: true`) is a brand or a discriminant, which the rule leaves out.
+  if (!ts.isUnionTypeNode(type)) {
+    return type.kind === ts.SyntaxKind.BooleanKeyword;
+  }
+  const empty = [ts.SyntaxKind.UndefinedKeyword, ts.SyntaxKind.VoidKeyword];
+  const kept = type.types.filter((one) => !empty.includes(one.kind) && !(ts.isLiteralTypeNode(one) && one.literal.kind === ts.SyntaxKind.NullKeyword));
   return kept.length > 0 && kept.every((one) => one.kind === ts.SyntaxKind.BooleanKeyword || booleanLiteral(one));
 }
 
@@ -381,7 +385,9 @@ function recordFlags(node: ts.Node, file: ts.SourceFile): string[] {
     }
     const initial = ts.isPropertyDeclaration(property) ? property.initializer : undefined;
     const flagged = initial !== undefined && [ts.SyntaxKind.TrueKeyword, ts.SyntaxKind.FalseKeyword].includes(initial.kind);
-    return flagAnnotation(property.type) || flagged ? [property.name.getText(file)] : [];
+    // A `readonly` field given a literal is a constant, which the rule leaves out.
+    const constant = flagged && ts.getModifiers(property)?.some((one) => one.kind === ts.SyntaxKind.ReadonlyKeyword) === true;
+    return !constant && (flagAnnotation(property.type) || flagged) ? [property.name.getText(file)] : [];
   });
 }
 
