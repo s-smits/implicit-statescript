@@ -38,7 +38,7 @@ interface Write {
 const ROOT = "/";
 
 /** The last word of a compared subject: `status` for `issue.status`, `kind` for `a?.kind()`. */
-const lastWord = (subject: string): string => /(\w+)\W*$/u.exec(subject)?.[1] ?? subject;
+export const lastWord = (subject: string): string => /(\w+)\W*$/u.exec(subject)?.[1] ?? subject;
 
 /** The state a call's setter sets, by its name or its method's name. */
 const setterOf = (callee: ts.Expression): string | null =>

@@ -5,6 +5,13 @@ import { noCoupledFlagsRule } from "./no-coupled-flags.ts";
 const tester = new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } });
 const mode = { messageId: "mode" };
 
+/** An editor's instance state written through a method the `set*` convention does not name. */
+const UPDATES = `export function tools(editor: { updateInstanceState(next: object): void }) {
+  editor.updateInstanceState({ isToolLocked: true, isPenMode: false });
+  editor.updateInstanceState({ isToolLocked: false, isPenMode: true });
+  editor.updateInstanceState({ isToolLocked: false, isPenMode: false });
+}`;
+
 const MODES = `import { useState } from "react";
 export function Loader() {
   const [isLoading, setIsLoading] = useState(false);
@@ -105,6 +112,7 @@ export function clearOnce(store: { open: boolean; dirty: boolean }) {
     { name: "fields: 4 asks for a larger cluster", filename: "src/four.tsx", code: MODES, options: [{ fields: 4 }] },
     { name: "writes: 5 asks for more co-writes", filename: "src/many.tsx", code: MODES, options: [{ writes: 5 }] },
     { name: "a test file is not read", filename: "src/modes.spec.tsx", code: MODES },
+    { name: "a method outside the set* convention writes nothing by default", code: UPDATES },
   ],
   invalid: [
     {
@@ -130,6 +138,12 @@ export function rest(tool: { isResizing: boolean; isRotating: boolean }) {
   tool.isResizing = false;
   tool.isRotating = false;
 }`,
+      errors: [{ ...mode, line: 2 }],
+    },
+    {
+      name: "setters names a repository's own writer, by name or pattern",
+      code: UPDATES,
+      options: [{ setters: ["update*State"] }],
       errors: [{ ...mode, line: 2 }],
     },
   ],

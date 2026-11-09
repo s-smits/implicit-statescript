@@ -9,7 +9,7 @@ import {
   propertyName,
   setterState,
 } from "../shared/syntax.ts";
-import { asRecord, isNumber, type JsonValue, type RuleExample } from "../shared/values.ts";
+import { asRecord, isNumber, type JsonValue, NAMES_SCHEMA, nameMatcher, type RuleExample } from "../shared/values.ts";
 
 /**
  * Fields of one state that are written together, where each write sets at most one
@@ -35,6 +35,11 @@ import { asRecord, isNumber, type JsonValue, type RuleExample } from "../shared/
  * choices), fields set together (`{ x, y }`), and a reset that clears every field, which on its own
  * shows no mode. Test files are not read.
  *
+ * `setters` names the functions and methods that write a state record from an object beside the
+ * `set*` convention (a store's `update`, an editor's `updateInstanceState`), by name with `*` for
+ * any run of characters; an object handed to one is a co-write of the state it names. It is a fact
+ * about one repository, so it is empty by default.
+ *
  * There is no fix: what the mode is called and what each state carries is the change.
  */
 const FIELDS = 2;
@@ -51,9 +56,12 @@ interface CoWrite {
   node: ESTree.Node;
 }
 
-/** The state a call's setter sets, by its name or its method's name. */
-const setterOfCall = (callee: ESTree.Node): string | null =>
-  setterState(identifierName(callee) ?? propertyName(callee));
+/** The state a call's setter sets, by its name or its method's name; a setter the repository
+ *  names (`setters`) sets the state of its own name. */
+function setterOfCall(callee: ESTree.Node, setters: (name: string) => boolean = () => false): string | null {
+  const name = identifierName(callee) ?? propertyName(callee);
+  return name !== null && setters(name) ? name : setterState(name);
+}
 
 /** Whether a written value clears the field: `false`, `null`, `undefined` or `void 0`. */
 function valueOf(node: ESTree.Node): Value {
@@ -80,11 +88,11 @@ function objectFields(object: ESTree.ObjectExpression): Map<string, Value> {
 
 /** The setter an object reaches as its argument, or as what an updater passed to it returns:
  *  `setState({ … })`, `setState((prev) => ({ … }))` or `setState((prev) => { return { … }; })`. */
-function setterOf(object: ESTree.ObjectExpression): string | null {
+function setterOf(object: ESTree.ObjectExpression, setters: (name: string) => boolean): string | null {
   let at: ESTree.Node = object;
   for (let up: ESTree.Node | null = at.parent; up !== null; up = up.parent) {
     if (up.type === "CallExpression") {
-      return up.arguments.some((argument) => argument === at) ? setterOfCall(up.callee) : null;
+      return up.arguments.some((argument) => argument === at) ? setterOfCall(up.callee, setters) : null;
     }
     const through =
       up.type === "ParenthesizedExpression" ||
@@ -160,7 +168,12 @@ export const noCoupledFlagsRule = defineRule({
     schema: [
       {
         type: "object",
-        properties: { fields: { type: "number" }, writes: { type: "number" }, exclusive: { type: "number" } },
+        properties: {
+          fields: { type: "number" },
+          writes: { type: "number" },
+          exclusive: { type: "number" },
+          setters: NAMES_SCHEMA,
+        },
         additionalProperties: false,
       },
     ],
@@ -176,6 +189,7 @@ export const noCoupledFlagsRule = defineRule({
     const minFields = numberOr(option.fields, FIELDS);
     const minWrites = numberOr(option.writes, WRITES);
     const share = numberOr(option.exclusive, EXCLUSIVE);
+    const setters = nameMatcher(option.setters);
     const writes: CoWrite[] = [];
     const text = (node: ESTree.Node): string => context.sourceCode.getText(node).replaceAll(/\s+/gu, "");
 
@@ -232,7 +246,7 @@ export const noCoupledFlagsRule = defineRule({
       ...everyStatementList(runs),
       ObjectExpression: (node) => {
         const spread = node.properties.find((property) => property.type === "SpreadElement");
-        const state = setterOf(node) ?? (spread === undefined ? null : text(spread.argument));
+        const state = setterOf(node, setters) ?? (spread === undefined ? null : text(spread.argument));
         const fields = objectFields(node);
         if (state !== null && fields.size >= 2) {
           writes.push({ state, fields, node });

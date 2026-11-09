@@ -4,6 +4,22 @@ import { noMarkerFileStateRule } from "./no-marker-file-state.ts";
 
 const tester = new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } });
 const phase = { messageId: "phase" };
+const marker = { messageId: "marker" };
+
+/** A phase read through an existence check another module wraps, invisible from this file. */
+const IMPORTED = `import { join } from "node:path";
+import { isFile } from "./fs.ts";
+export function phaseOf(runDir: string): string {
+  if (isFile(join(runDir, "done.json"))) return "done";
+  return isFile(join(runDir, "started.json")) ? "running" : "queued";
+}`;
+
+/** One marker in a run's folder deciding the phase. */
+const ONE_MARKER = `import { existsSync } from "node:fs";
+import { join } from "node:path";
+export function finished(runDir: string): boolean {
+  return existsSync(join(runDir, "done.json"));
+}`;
 
 const PHASES = `import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -65,6 +81,22 @@ export function config(dir: string): string {
       filename: "test/phases.ts",
       code: PHASES,
     },
+    { name: "an imported existence check is unknown by default", code: IMPORTED },
+    { name: "one marker is a guard by default", code: ONE_MARKER },
+    {
+      name: "stateDirs leaves a folder it does not name to the two-file reading",
+      code: ONE_MARKER,
+      options: [{ stateDirs: ["stateDir"] }],
+    },
+    {
+      name: "a marker in a state folder that guards its own use reads an optional file",
+      code: `import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+export const notes = (runDir: string): string =>
+  existsSync(join(runDir, "notes.txt")) ? readFileSync(join(runDir, "notes.txt"), "utf8") : "";`,
+      options: [{ stateDirs: ["runDir"] }],
+    },
+    { name: "files: 3 asks for a third file", filename: "src/phases.ts", code: PHASES, options: [{ files: 3 }] },
   ],
   invalid: [
     {
@@ -93,6 +125,28 @@ export function phase(dir: string): string {
   return finished ? "done" : started ? "running" : "queued";
 }`,
       errors: [{ ...phase, line: 4 }],
+    },
+    {
+      name: "fsWrappers names an existence check from another module",
+      code: IMPORTED,
+      options: [{ fsWrappers: ["isFile"] }],
+      errors: [{ ...phase, line: 5 }],
+    },
+    {
+      name: "a named wrapper taking a folder and a file reads them as the place",
+      code: `import { hasMarker } from "./markers.ts";
+export function phaseOf(runDir: string): string {
+  if (hasMarker(runDir, "done")) return "done";
+  return hasMarker(runDir, "started") ? "running" : "queued";
+}`,
+      options: [{ fsWrappers: ["has*"] }],
+      errors: [{ ...phase, line: 4 }],
+    },
+    {
+      name: "stateDirs makes one deciding marker in a state folder a phase",
+      code: ONE_MARKER,
+      options: [{ stateDirs: ["runDir"] }],
+      errors: [{ ...marker, line: 4 }],
     },
   ],
 });

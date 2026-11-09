@@ -8,7 +8,7 @@ import {
   isTestPath,
   propertyName,
 } from "../shared/syntax.ts";
-import type { RuleExample } from "../shared/values.ts";
+import { asRecord, isNumber, NAMES_SCHEMA, nameMatcher, type RuleExample } from "../shared/values.ts";
 
 /**
  * One function decides which phase a process is in by which files exist in one
@@ -30,8 +30,18 @@ import type { RuleExample } from "../shared/values.ts";
  * Not reported: a single guard (`if (!existsSync(dir)) mkdirSync(dir)`), checks of files in two
  * different folders, and one file checked twice. Tests are not read. There is no fix: which record
  * owns the phase is the change.
+ *
+ * Three options carry what one repository knows, and each is empty or generic by default.
+ * `fsWrappers` names the functions that ask whether a path exists from another module (a
+ * `pathExists` of its own, a `hasMarker(dir, name)`), by name with `*` for any run of characters;
+ * one called with two or more arguments reads its last as the file and the rest as the folder.
+ * `stateDirs` names the folders whose files are a process's state (`runDir`, `stateDir`), matched
+ * against any identifier of the folder's path, and in one of those a single deciding check is a
+ * phase read off a marker. `files` is how many distinct files of one folder elsewhere make a phase
+ * (default 2).
  */
 const EXISTS = new Set(["existsSync", "pathExists", "pathExistsSync"]);
+const FILES = 2;
 const JOINS = new Set(["join", "resolve"]);
 
 /** A folder and the file named in it, read off a path expression. */
@@ -57,10 +67,22 @@ export const noMarkerFileStateRule = defineRule({
     messages: {
       phase:
         "This function reads a phase from which files exist in `{{folder}}` ({{files}}). A crash between two writes leaves a combination no branch expects; record the phase once and read that record.",
+      marker:
+        "This function reads a phase from whether {{files}} exists in `{{folder}}`, a folder the configuration names as state. A marker file is a phase with no owner; record the phase once and read that record.",
     },
+    schema: [
+      {
+        type: "object",
+        properties: { fsWrappers: NAMES_SCHEMA, stateDirs: NAMES_SCHEMA, files: { type: "number" } },
+        additionalProperties: false,
+      },
+    ],
   },
   createOnce(context) {
     const wrappers = new Set<string>();
+    let configured = nameMatcher(undefined);
+    let stateDir = nameMatcher(undefined);
+    let least = FILES;
     const bindings = new Map<string, ESTree.Expression>();
     const found = new Map<ESTree.Node, Map<string, { files: Set<string>; at: ESTree.Node }>>();
 
@@ -69,7 +91,7 @@ export const noMarkerFileStateRule = defineRule({
     /** Whether a call asks the platform whether a path exists, directly or through a local wrapper. */
     function existence(call: ESTree.CallExpression): ESTree.Node | null {
       const name = calleeName(call);
-      if (name !== null && (EXISTS.has(name) || wrappers.has(name))) {
+      if (name !== null && (EXISTS.has(name) || wrappers.has(name) || configured(name))) {
         return call.arguments[0] ?? null;
       }
       if (name !== "exists" || call.callee.type !== "MemberExpression") {
@@ -142,7 +164,7 @@ export const noMarkerFileStateRule = defineRule({
      * (existsSync(p)) copy(p)` and `existsSync(p) ? read(p) : null` read an optional file, which is
      * no phase. Read on the text, where the check itself is one argument list holding the path.
      */
-    function guardsItsOwnUse(call: ESTree.CallExpression, argument: ESTree.Node): boolean {
+    function guardsItsOwnUse(call: ESTree.CallExpression, written: string): boolean {
       let region: ESTree.Node = call;
       while (region.parent !== null && region.parent !== undefined) {
         const parent: ESTree.Node = region.parent;
@@ -159,16 +181,27 @@ export const noMarkerFileStateRule = defineRule({
         }
         region = parent;
       }
-      const path = text(argument).replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
+      const path = written.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
       return (text(region).match(new RegExp(`[(,]${path}[),]`, "gu")) ?? []).length > 1;
     }
 
+    /** The folder and file a configured wrapper's arguments name: `hasMarker(dir, "done")`. */
+    function placeOfArguments(call: ESTree.CallExpression): Place | null {
+      const name = calleeName(call);
+      const last = call.arguments.at(-1);
+      if (name === null || !configured(name) || call.arguments.length < 2 || last === undefined) {
+        return null;
+      }
+      return { folder: call.arguments.slice(0, -1).map(text).join(","), file: text(last) };
+    }
+
     function record(call: ESTree.CallExpression, argument: ESTree.Node): void {
-      if (guardsItsOwnUse(call, argument)) {
+      const named = placeOfArguments(call);
+      if (guardsItsOwnUse(call, named === null ? text(argument) : call.arguments.map(text).join(","))) {
         return;
       }
       const decided = decides(call) || call.parent?.type === "VariableDeclarator";
-      const place = decided ? placeOf(argument) : null;
+      const place = decided ? (named ?? placeOf(argument)) : null;
       if (place === null) {
         return;
       }
@@ -176,7 +209,7 @@ export const noMarkerFileStateRule = defineRule({
       const folders = found.get(owner) ?? new Map<string, { files: Set<string>; at: ESTree.Node }>();
       const entry = folders.get(place.folder) ?? { files: new Set<string>(), at: call };
       entry.files.add(place.file);
-      if (entry.files.size === 2) {
+      if (entry.files.size === least) {
         entry.at = call;
       }
       folders.set(place.folder, entry);
@@ -185,6 +218,10 @@ export const noMarkerFileStateRule = defineRule({
 
     return {
       before: () => {
+        const option = asRecord(context.options[0]) ?? {};
+        configured = nameMatcher(option.fsWrappers);
+        stateDir = nameMatcher(option.stateDirs);
+        least = isNumber(option.files) ? option.files : FILES;
         wrappers.clear();
         bindings.clear();
         found.clear();
@@ -223,11 +260,12 @@ export const noMarkerFileStateRule = defineRule({
       "Program:exit": () => {
         for (const folders of found.values()) {
           for (const [folder, { files, at }] of folders) {
-            if (files.size < 2) {
+            const marker = (folder.match(/[$\w]+/gu) ?? []).some(stateDir);
+            if (files.size < least && !marker) {
               continue;
             }
             const data = { folder, files: [...files].map((file) => `\`${file}\``).join(", ") };
-            context.report({ node: at, messageId: "phase", data });
+            context.report({ node: at, messageId: files.size < least ? "marker" : "phase", data });
           }
         }
       },

@@ -1,6 +1,6 @@
 import { defineRule, type ESTree } from "@oxlint/plugins";
-import { calleeName, declaredBy, innermost, isTestPath, memberObject } from "../shared/syntax.ts";
-import type { RuleExample } from "../shared/values.ts";
+import { calleeName, declaredBy, enclosingFunction, innermost, isTestPath, memberObject } from "../shared/syntax.ts";
+import { asRecord, NAMES_SCHEMA, nameMatcher, type RuleExample } from "../shared/values.ts";
 
 /**
  * A file's age compared with a constant decides whether its holder is alive:
@@ -22,30 +22,40 @@ import type { RuleExample } from "../shared/values.ts";
  * lastRun`, which asks "newer than", a cache question), an age printed rather than compared, and
  * an elapsed time that reads no file (`Date.now() - started > limit`). Tests are not read. There is
  * no fix: the owner of the holder's state is a design choice.
+ *
+ * Two options carry what one repository knows, both empty by default, by name with `*` for any run
+ * of characters. `fsWrappers` names the functions that return a file's time from another module
+ * (`mtimeOf(path)`), so their result counts as a file time. `processReaders` names the functions
+ * that ask whether a process lives (`isAlive(pid)`, a wrapper of `ps` or `kill(pid, 0)`); a
+ * function that calls one asks the holder, and its age test is a fallback rather than the guess.
  */
 const FILE_TIMES = new Set(["mtimeMs", "ctimeMs", "mtime", "ctime", "lastModified"]);
 const RELATIONS = new Set(["<", "<=", ">", ">="]);
 /** A name in the convention for a module constant, `STALE_MS`, or a member of one, `LIMITS.wall`. */
 const CONSTANT_NAME = /^[A-Z][A-Z0-9_]*$/u;
 
-/** Whether an expression reads a file's modification or change time. */
-function fileTime(node: ESTree.Node): boolean {
+/** Whether an expression reads a file's modification or change time, by the platform's name or
+ *  through a function the repository names (`fsWrappers`). */
+function fileTime(node: ESTree.Node, wrappers: (name: string) => boolean): boolean {
   const bare = innermost(node);
   if (bare.type === "MemberExpression") {
     return !bare.computed && bare.property.type === "Identifier" && FILE_TIMES.has(bare.property.name);
   }
   if (bare.type === "UnaryExpression" && bare.operator === "+") {
-    return fileTime(bare.argument);
+    return fileTime(bare.argument, wrappers);
   }
   if (bare.type !== "CallExpression") {
     return false;
   }
   const name = calleeName(bare);
+  if (name !== null && wrappers(name)) {
+    return true;
+  }
   if (name === "Number" && bare.arguments[0] !== undefined) {
-    return fileTime(bare.arguments[0]);
+    return fileTime(bare.arguments[0], wrappers);
   }
   const object = memberObject(bare.callee);
-  return name === "getTime" && object !== null && fileTime(object);
+  return name === "getTime" && object !== null && fileTime(object, wrappers);
 }
 
 /**
@@ -71,9 +81,9 @@ function fixed(node: ESTree.Node, constants: ReadonlySet<string>): boolean {
 }
 
 /** An age: a difference whose subtrahend is a file time. */
-function age(node: ESTree.Node): boolean {
+function age(node: ESTree.Node, wrappers: (name: string) => boolean): boolean {
   const bare = innermost(node);
-  return bare.type === "BinaryExpression" && bare.operator === "-" && fileTime(bare.right);
+  return bare.type === "BinaryExpression" && bare.operator === "-" && fileTime(bare.right, wrappers);
 }
 
 export const noAgeBasedLockRule = defineRule({
@@ -93,14 +103,44 @@ export const noAgeBasedLockRule = defineRule({
     messages: {
       age: "A file's age compared with a constant decides whether its holder is alive, so a slow holder reads as a dead one. Keep the state with the holder: a pid to ask, a lease it renews, or an exclusive open released on exit.",
     },
+    schema: [
+      {
+        type: "object",
+        properties: { fsWrappers: NAMES_SCHEMA, processReaders: NAMES_SCHEMA },
+        additionalProperties: false,
+      },
+    ],
   },
   createOnce(context) {
     /** Module constants bound to a number, whatever their names. */
     const constants = new Set<string>();
+    /** Each age test found, and the functions (or the file) that ask a process reader. */
+    const ages: ESTree.BinaryExpression[] = [];
+    const asking = new Set<ESTree.Node>();
+    let wrappers = nameMatcher(undefined);
+    let readers = nameMatcher(undefined);
     return {
       before: () => {
+        const option = asRecord(context.options[0]) ?? {};
+        wrappers = nameMatcher(option.fsWrappers);
+        readers = nameMatcher(option.processReaders);
         constants.clear();
+        ages.length = 0;
+        asking.clear();
         return !isTestPath(context.filename);
+      },
+      CallExpression(node) {
+        const name = calleeName(node);
+        if (name !== null && readers(name)) {
+          asking.add(enclosingFunction(node) ?? context.sourceCode.ast);
+        }
+      },
+      "Program:exit": () => {
+        for (const node of ages) {
+          if (!asking.has(enclosingFunction(node) ?? context.sourceCode.ast)) {
+            context.report({ node, messageId: "age" });
+          }
+        }
       },
       Program: (program) => {
         for (const statement of program.body) {
@@ -120,19 +160,19 @@ export const noAgeBasedLockRule = defineRule({
           return;
         }
         const { left, right } = node;
-        const ages = (age(left) && fixed(right, constants)) || (age(right) && fixed(left, constants));
+        const aged = (age(left, wrappers) && fixed(right, constants)) || (age(right, wrappers) && fixed(left, constants));
         const window = (time: ESTree.Node, other: ESTree.Node): boolean => {
           const span = innermost(other);
           return (
-            fileTime(time) &&
+            fileTime(time, wrappers) &&
             span.type === "BinaryExpression" &&
             span.operator === "-" &&
             fixed(span.right, constants)
           );
         };
         const against = window(left, right) || window(right, left);
-        if (ages || against) {
-          context.report({ node, messageId: "age" });
+        if (aged || against) {
+          ages.push(node);
         }
       },
     };

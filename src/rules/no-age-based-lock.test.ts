@@ -50,6 +50,23 @@ export function old(file: string, days: number): boolean {
 export const ageOf = (file: string): number => Date.now() - statSync(file).mtimeMs;`,
     },
     {
+      name: "a file time read through another module's function is unknown by default",
+      code: `import { mtimeOf } from "./fs.ts";
+const STALE_MS = 60_000;
+export const stale = (lock: string) => Date.now() - mtimeOf(lock) > STALE_MS;`,
+    },
+    {
+      name: "processReaders: a function that asks whether the holder lives uses the age as a fallback",
+      code: `import { rmSync, statSync, readFileSync } from "node:fs";
+import { isAlive } from "./process.ts";
+const STALE_MS = 60_000;
+export function clear(lock: string): void {
+  const holder = Number(readFileSync(lock, "utf8"));
+  if (!isAlive(holder) && Date.now() - statSync(lock).mtimeMs > STALE_MS) rmSync(lock);
+}`,
+      options: [{ processReaders: ["isAlive"] }],
+    },
+    {
       name: "a test file is not read",
       filename: "src/locks.test.ts",
       code: `import { statSync } from "node:fs";
@@ -80,6 +97,25 @@ export async function stale(lock: string): Promise<boolean> {
       code: `import { statSync } from "node:fs";
 export const stale = (lock: string) => Date.now() - statSync(lock).mtime.getTime() >= 5_000;`,
       errors: [{ ...age, line: 2 }],
+    },
+    {
+      name: "fsWrappers names a function that returns a file's time",
+      code: `import { mtimeOf } from "./fs.ts";
+const STALE_MS = 60_000;
+export const stale = (lock: string) => Date.now() - mtimeOf(lock) > STALE_MS;`,
+      options: [{ fsWrappers: ["mtimeOf"] }],
+      errors: [{ ...age, line: 3 }],
+    },
+    {
+      name: "the same age test is reported where no process reader is named",
+      code: `import { rmSync, statSync, readFileSync } from "node:fs";
+import { isAlive } from "./process.ts";
+const STALE_MS = 60_000;
+export function clear(lock: string): void {
+  const holder = Number(readFileSync(lock, "utf8"));
+  if (!isAlive(holder) && Date.now() - statSync(lock).mtimeMs > STALE_MS) rmSync(lock);
+}`,
+      errors: [{ ...age, line: 6 }],
     },
   ],
 });

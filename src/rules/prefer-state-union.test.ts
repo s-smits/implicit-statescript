@@ -96,6 +96,27 @@ tester.run("implicit-state/prefer-state-union", preferStateUnionRule, {
       code: `export interface Upload { pending: boolean; sending: boolean; sent: boolean; failed: boolean }`,
       options: [{ max: 4 }],
     },
+    {
+      name: "ignore leaves out the records a repository reads as settings, by name or pattern",
+      code: `export interface EditorOptions { snap: boolean; grid: boolean; debug: boolean; readonly: boolean }
+export type ShapeFlags = { a: boolean; b: boolean; c: boolean; d: boolean };
+export class Theme { dark = false; dense = false; rounded = true; serif = false }`,
+      options: [{ ignore: ["*Options", "ShapeFlags", "Theme"] }],
+    },
+    {
+      name: "ignore names a component for its useState record and a function for its parameters",
+      filename: "src/toolbar.tsx",
+      code: `import { useState } from "react";
+export function Toolbar() {
+  const [a, setA] = useState(false);
+  const [b, setB] = useState(false);
+  const [c, setC] = useState(false);
+  const [d, setD] = useState(false);
+  return [a, b, c, d, setA, setB, setC, setD];
+}
+export const draw = (fill: boolean, stroke: boolean, shadow: boolean, dashed: boolean) => [fill, stroke, shadow, dashed];`,
+      options: [{ ignore: ["Toolbar", "draw"] }],
+    },
   ],
   invalid: [
     {
@@ -113,6 +134,19 @@ tester.run("implicit-state/prefer-state-union", preferStateUnionRule, {
       name: "an object type literal holds a record too",
       code: `export type Flags = { a: boolean; b: boolean; c: boolean; d: true };`,
       errors: [{ ...record, line: 1 }],
+    },
+    {
+      name: "max lowers the record threshold, where three flags are silent by default",
+      code: `export interface Request { loading: boolean; failed: boolean; done: boolean }`,
+      options: [{ max: 2 }],
+      errors: [{ ...record, line: 1 }],
+    },
+    {
+      name: "ignore leaves every other record reported",
+      code: `export interface EditorOptions { snap: boolean; grid: boolean; debug: boolean; readonly: boolean }
+export interface EditorState { idle: boolean; busy: boolean; saving: boolean; failed: boolean }`,
+      options: [{ ignore: ["*Options"] }],
+      errors: [{ ...record, line: 2 }],
     },
     {
       name: "params lowers the parameter threshold",

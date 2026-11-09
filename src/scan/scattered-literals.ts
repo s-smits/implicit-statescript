@@ -21,10 +21,19 @@
  *
  * Not read: tests, declaration files, vendored and generated folders. `typeof x === "string"` is
  * no state. The scan is syntactic apart from that filter, and leans to silence.
+ *
+ * Two options carry what one repository knows, both empty by default, by name with `*` for any run
+ * of characters. `stateTypes` names declared sets the repository holds to be states (`JobState`,
+ * `TLInstance.status`, or a discriminated union by its alias): each is read as a state whatever
+ * its writes show, and is reported from one reader on. `owners` names the functions that already
+ * compute a grouping (`isTerminal`, `isSettled`): a grouping inside one does not count as a
+ * reader, and a grouping elsewhere that spells the same literals over a subject of the same name
+ * is reported at the owner from one place on, since the owner already names it.
  */
 import * as ts from "typescript5";
 import { isTestPath } from "../shared/syntax.ts";
-import { type LiteralSet, statefulSets } from "./state-role.ts";
+import { nameMatcher } from "../shared/values.ts";
+import { lastWord, type LiteralSet, statefulSets } from "./state-role.ts";
 
 /** What the scan reports: a state, or a set read as an enumeration of kinds. */
 export const FINDING_KINDS = ["no-scattered-state-literals", "no-scattered-enumeration-literals"] as const;
@@ -65,6 +74,15 @@ interface Grouping {
   line: number;
   /** For a switch, every literal its cases name, to tell an exhaustive one. */
   switchCovers?: ReadonlySet<string>;
+  /** The name of the function the grouping sits in, or null at module scope or in one unnamed. */
+  within?: string | null;
+}
+
+/** What one repository knows, as the scan's options: see the head comment. */
+export interface ScanOptions {
+  readers?: number;
+  stateTypes?: readonly string[];
+  owners?: readonly string[];
 }
 
 /** What the declarations of every file add up to before any reader is read. */
@@ -348,36 +366,79 @@ function switchGroupings(node: ts.SwitchStatement, file: ts.SourceFile, path: st
     .map((values) => ({ subject, values, path, line: lineOf(file, node), switchCovers: covers }));
 }
 
+/** The name a function is declared or bound under: its own, its method's, or its `const`'s. */
+function functionName(node: ts.Node): string | null {
+  if ((ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) && node.name !== undefined) {
+    return node.name.getText();
+  }
+  const { parent } = node;
+  const bound = ts.isVariableDeclaration(parent) || ts.isPropertyAssignment(parent) || ts.isPropertyDeclaration(parent);
+  return (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) && bound ? parent.name.getText() : null;
+}
+
 function groupingsIn(path: string, file: ts.SourceFile): Grouping[] {
   const found: Grouping[] = [];
-  const visit = (node: ts.Node): void => {
+  const visit = (node: ts.Node, within: string | null): void => {
+    const add = (rows: readonly Grouping[]): void => {
+      found.push(...rows.map((row) => ({ ...row, within })));
+    };
     if (ts.isBinaryExpression(node)) {
-      found.push(...chainGroupings(node, file, path));
+      add(chainGroupings(node, file, path));
     }
     const membership = ts.isCallExpression(node) ? membershipGrouping(node, file, path) : null;
     if (membership !== null) {
-      found.push(membership);
+      add([membership]);
     }
     if (ts.isSwitchStatement(node)) {
-      found.push(...switchGroupings(node, file, path));
+      add(switchGroupings(node, file, path));
     }
-    ts.forEachChild(node, visit);
+    const inner = ts.isFunctionLike(node) ? (functionName(node) ?? within) : within;
+    ts.forEachChild(node, (child) => visit(child, inner));
   };
-  visit(file);
+  visit(file, null);
   return found;
+}
+
+/**
+ * Each grouping an owner function makes that other places spell again by hand: the same literals
+ * over a subject with the same last word (`job.state` and `run.state`).
+ */
+function restated(groupings: readonly Grouping[], isOwner: (name: string) => boolean): Finding[] {
+  const key = (one: Grouping): string => `${lastWord(one.subject)} ${quoted(one.values.toSorted())}`;
+  const inOwner = (one: Grouping): boolean => one.within !== null && one.within !== undefined && isOwner(one.within);
+  const elsewhere = Map.groupBy(groupings.filter((one) => !inOwner(one)), key);
+  return groupings.filter(inOwner).flatMap((owner) => {
+    const copies = elsewhere.get(key(owner)) ?? [];
+    if (copies.length === 0) {
+      return [];
+    }
+    return [
+      {
+        kind: "no-scattered-state-literals" as const,
+        path: owner.path,
+        line: owner.line,
+        detail: `\`${owner.within ?? ""}\` already groups ${quoted(owner.values)} over \`${lastWord(owner.subject)}\`, and ${String(copies.length)} other places group the same by hand: call it`,
+        places: [owner, ...copies].map((one) => ({ path: one.path, line: one.line })),
+      },
+    ];
+  });
 }
 
 const quoted = (values: Iterable<string>): string => [...values].map((value) => `"${value}"`).join(" | ");
 
 /** Every declared set of states grouped by hand in `readers` or more other files. */
-export function scatteredLiterals(files: ReadonlyMap<string, string>, readers = READER_FLOOR): Finding[] {
+export function scatteredLiterals(files: ReadonlyMap<string, string>, options: ScanOptions = {}): Finding[] {
+  const readers = options.readers ?? READER_FLOOR;
+  const isOwner = nameMatcher(options.owners ?? []);
+  const isStateType = nameMatcher(options.stateTypes ?? []);
+  const stateType = (one: Declared): boolean => isStateType(one.name) || isStateType(one.name.split(".")[0] ?? "");
   const parsed = [...parsedSources(files)].filter(([path]) => !isTestPath(path));
   const tally: Tally = { tagged: new Map(), variants: [] };
   const declared = parsed.flatMap(([path, file]) => declaredIn(path, file, tally));
   declared.push(...tally.variants.flatMap((one) => discriminated(one, tally.tagged)));
   const groupings = parsed.flatMap(([path, file]) => groupingsIn(path, file));
   const owned = new Map<Declared, Grouping[]>();
-  for (const grouping of groupings) {
+  for (const grouping of groupings.filter((one) => one.within === null || one.within === undefined || !isOwner(one.within))) {
     // The smallest declared set outside the grouping's file that holds every literal of it, one
     // whose states sit in a property the grouping compares first.
     const owner = declared
@@ -392,10 +453,11 @@ export function scatteredLiterals(files: ReadonlyMap<string, string>, readers = 
       owned.set(owner, [...(owned.get(owner) ?? []), grouping]);
     }
   }
-  const found: { row: Finding; set: LiteralSet }[] = [];
+  const found: { row: Finding; set: LiteralSet; named: boolean }[] = [];
   for (const [owner, groupedBy] of owned) {
     const readerFiles = new Set(groupedBy.map((one) => one.path));
-    if (readerFiles.size < readers) {
+    const named = stateType(owner);
+    if (readerFiles.size < (named ? 1 : readers)) {
       continue;
     }
     const sets = new Set(groupedBy.map((one) => quoted(one.values.toSorted())));
@@ -406,14 +468,14 @@ export function scatteredLiterals(files: ReadonlyMap<string, string>, readers = 
       detail: `\`${owner.name}\` (${quoted(owner.values)}) is grouped by hand in ${readerFiles.size} other files, as ${[...sets].join("; ")}: give each grouping a name in the owner and call it`,
       places: [owner, ...groupedBy].map((one) => ({ path: one.path, line: one.line })),
     };
-    found.push({ row, set: { values: owner.values, subjects: groupedBy.map((one) => one.subject) } });
+    found.push({ row, set: { values: owner.values, subjects: groupedBy.map((one) => one.subject) }, named });
   }
   const stateful = statefulSets(
     new Map(parsed),
     found.map((one) => one.set),
   );
-  return found.map(({ row }, index) =>
-    stateful[index] === true
+  const spread = found.map(({ row, named }, index): Finding =>
+    stateful[index] === true || named
       ? row
       : {
           ...row,
@@ -421,4 +483,5 @@ export function scatteredLiterals(files: ReadonlyMap<string, string>, readers = 
           detail: `an enumeration rather than a state, since no literal of it is written where a value changes: ${row.detail}`,
         },
   );
+  return [...spread, ...restated(groupings, isOwner)];
 }

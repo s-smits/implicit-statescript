@@ -1,7 +1,15 @@
 import { defineRule, type ESTree } from "@oxlint/plugins";
 import { flagBinding, isFlagType } from "../shared/flags.ts";
 import { calleeName, identifierName, isTestPath, literalValue } from "../shared/syntax.ts";
-import { asRecord, isBoolean, isNumber, type JsonValue, type RuleExample } from "../shared/values.ts";
+import {
+  asRecord,
+  isBoolean,
+  isNumber,
+  type JsonValue,
+  NAMES_SCHEMA,
+  nameMatcher,
+  type RuleExample,
+} from "../shared/values.ts";
 
 /**
  * Ported from Clippy's `struct_excessive_bools` and `fn_params_excessive_bools`
@@ -29,6 +37,10 @@ import { asRecord, isBoolean, isNumber, type JsonValue, type RuleExample } from 
  * The function half counts a declaration's boolean parameters and reports more than `params`
  * (Clippy's default, 3). A repository that already reports every boolean parameter on its own
  * passes `params: null` and keeps one owner for that fact.
+ *
+ * `ignore` names the records, classes, components and functions a repository reads as settings
+ * rather than state (`TldrawOptions`, or `*Props` for every props record), by name with `*` for
+ * any run of characters. It is a fact about one repository, so it is empty by default.
  *
  * Test files and declaration files (`.d.ts`, another package's interface described) are not read:
  * a fixture lists its flags beside each other on purpose.
@@ -91,6 +103,25 @@ function cellName(call: ESTree.CallExpression): string {
 /** The name a function declares, for the message. */
 const named = (node: { id?: ESTree.Node | null }): string => identifierName(node.id) ?? "this function";
 
+/**
+ * The name a record is declared under, for `ignore`: an interface's, a type alias's for its object
+ * type, a class's for its body, and a function's for its `useState` cells, by its own name or the
+ * `const` it is bound to. Null for an object type or a function nothing names.
+ */
+function declaredName(node: ESTree.Node): string | null {
+  if (node.type === "TSInterfaceDeclaration") {
+    return node.id.name;
+  }
+  const holder = node.parent;
+  if (node.type === "TSTypeLiteral" || node.type === "ClassBody") {
+    return holder?.type === "TSTypeAliasDeclaration" || holder?.type === "ClassDeclaration" || holder?.type === "ClassExpression"
+      ? identifierName(holder.id)
+      : null;
+  }
+  const own = node.type === "FunctionDeclaration" || node.type === "FunctionExpression" ? identifierName(node.id) : null;
+  return own ?? (holder?.type === "VariableDeclarator" ? identifierName(holder.id) : null);
+}
+
 /** A threshold option: a number, or null to leave that half to another rule. */
 function threshold(option: JsonValue | undefined, fallback: number): number | null {
   if (option === null) {
@@ -115,7 +146,7 @@ export const preferStateUnionRule = defineRule({
     schema: [
       {
         type: "object",
-        properties: { max: { type: "number" }, params: { type: ["number", "null"] } },
+        properties: { max: { type: "number" }, params: { type: ["number", "null"] }, ignore: NAMES_SCHEMA },
         additionalProperties: false,
       },
     ],
@@ -133,10 +164,12 @@ export const preferStateUnionRule = defineRule({
     const option = asRecord(context.options[0]) ?? {};
     const max = threshold(option.max, MAX_FIELDS) ?? MAX_FIELDS;
     const params = threshold(option.params, MAX_PARAMS);
+    const ignored = nameMatcher(option.ignore);
     const cells = new Map<ESTree.Node, string[]>();
 
     function record(node: ESTree.Node, what: string, names: readonly string[]): void {
-      if (names.length <= max) {
+      const name = declaredName(node);
+      if (names.length <= max || (name !== null && ignored(name))) {
         return;
       }
       const data = { what, count: String(names.length), names: names.join(", "), max: String(max) };
@@ -144,7 +177,7 @@ export const preferStateUnionRule = defineRule({
     }
 
     function parameters(node: FunctionLike, fn: string): void {
-      if (params === null) {
+      if (params === null || ignored(fn)) {
         return;
       }
       const flags = node.params.filter((parameter) => flagBinding(parameter) !== null);
