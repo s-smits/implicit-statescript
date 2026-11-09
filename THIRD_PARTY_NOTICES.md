@@ -10,8 +10,9 @@ below, whose licences require their notices to travel with the copies.
   Apache-2.0; this port takes it under MIT.
 - Port: `src/rules/prefer-state-union.ts`, TypeScript over Oxlint's ESTree. Local changes: a record
   is an interface, an object type literal or a class rather than a struct; a flag is a required
-  member typed `boolean`, `true` or `false` (with `undefined` or `null` beside it) or a class field
-  initialised to a boolean, where Clippy counts every `bool` field; optional members and
+  member typed `boolean`, or `true` or `false` with `undefined` or `null` beside it, or a class
+  field initialised to a boolean, where Clippy counts every `bool` field; a member typed as one
+  literal (a brand) and a `readonly` field given a literal (a constant) do not count; optional members and
   declaration files are not read; the boolean `useState` cells of one function count as a record;
   `params: null` leaves the function half to another rule. Clippy's defaults (more than 3 of each)
   are kept, and its exemption for `#[repr(C)]` structs has no TypeScript counterpart.

@@ -17,7 +17,7 @@
  * A flag the command does not take, or a folder that is not there, exits 2 with the usage.
  *
  * Folders named `node_modules`, `dist`, `build`, `out`, `coverage`, `vendor`, `vendored`,
- * `third_party` or `generated`, and every dot folder, are skipped; test files are read by no rule.
+ * `third_party`, `third-party` or `generated`, and every dot folder, are skipped; test files are read by no rule.
  */
 import { readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";

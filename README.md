@@ -120,8 +120,9 @@ deciding something (a condition, comparison, return or `const`). An existence ch
 or a local function whose body only returns one of those of its parameter. The folder is read from
 `join(dir, "a")`, `resolve(dir, "a")`, `${dir}/a`, `dir + "/a"`, properties of one paths object
 (`paths.lock`, `paths.report`), or a `const` bound to one of those. At least one of the files must
-be written, copied, made, removed or renamed by a call in the same module (any call whose name
-begins with `write`, `copyFile`, `cp`, `mkdir`, `rm`, `unlink`, `rename` and their kin), naming it
+be written, copied, made, removed or renamed by a call in the same module (a call named
+`writeFile`, `copyFile`, `cp`, `mkdir`, `rm`, `unlink`, `rename` and their kin, with or without
+`Sync`, or any whose name begins with `write`), naming it
 directly or through the `const` bound to its path: a phase is recorded by the process that reads
 it. Not reported: a single guard (`if (!existsSync(dir)) mkdirSync(dir)`), files in two folders,
 one file checked twice, files the module only probes (which lockfile a project has, which candidate
@@ -267,8 +268,9 @@ same grouping spelled elsewhere is reported at the owner from one place on), `--
 Oxlint config whose `settings["implicit-state"]` holds `readers`, `stateTypes` and `owners`, so the
 scan reads the same file as the rules; a flag beside it wins), `--enumerations`, `--json` (an array
 of `{ rule, file, line, message, places }`), and `--error` (exit 1 on a state finding, for a gating
-check). A flag the command does not take, or a folder that is not there, exits 2 with the usage. Folders named `node_modules`, `dist`, `build`, `out`, `coverage`, `vendor`,
-`vendored`, `third_party` or `generated`, and every dot folder, are skipped. The scan runs under
+check). A flag the command does not take, or a folder that is not there, exits 2 with the usage.
+Folders named `node_modules`, `dist`, `build`, `out`, `coverage`, `vendor`, `vendored`,
+`third_party`, `third-party` or `generated`, and every dot folder, are skipped. The scan runs under
 Bun, which strips the types; it needs TypeScript 5 installed under the alias `typescript5`.
 
 ## Install

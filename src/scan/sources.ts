@@ -1,6 +1,6 @@
 /**
  * The TypeScript files a whole-tree command reads under a folder. Folders named `node_modules`,
- * `dist`, `build`, `out`, `coverage`, `vendor`, `vendored`, `third_party` or `generated`, and every
+ * `dist`, `build`, `out`, `coverage`, `vendor`, `vendored`, `third_party`, `third-party` or `generated`, and every
  * dot folder, are skipped, as are declaration files.
  */
 import { readdirSync, readFileSync } from "node:fs";
