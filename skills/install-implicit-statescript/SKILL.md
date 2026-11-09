@@ -6,7 +6,8 @@ description: Vendor the implicit-statescript Oxlint plugin into a TypeScript rep
 # Install implicit-statescript
 
 1. Copy `src/` from this repository into the target repository as
-   `vendor/implicit-statescript/src/`, leaving out every `*.test.ts` file.
+   `vendor/implicit-statescript/src/`, leaving out every `*.test.ts` file and keeping
+   `src/package.json`, which marks the folder as an ES module.
 2. Install the runtime dependencies with the target's package manager, pinned as here:
    `oxlint@1.83.0` and `@oxlint/plugins@1.83.0`, and `typescript5@npm:typescript@5.9.3` if the
    scan is wanted.
@@ -18,10 +19,11 @@ description: Vendor the implicit-statescript Oxlint plugin into a TypeScript rep
    `{ "name": "implicit-state", "specifier": "./vendor/implicit-statescript/src/index.ts" }` to
    `jsPlugins` and set the same rules to `"warn"`. Merge with the existing config; do not replace
    it.
-4. Run Oxlint and read every implicit-state warning before proposing a change. The measured
-   precision rests on small labelled counts, and `prefer-state-union` was right on about half of
-   its labelled hits, so report hits as places to look, not defects. Raise a rule to `error` only on the owner's
-   word.
+4. Run Oxlint (`bunx oxlint <src folder>`, or `bun x --bun oxlint <src folder>` where Node is
+   older than 22.18 or absent) and read every implicit-state warning before proposing a change.
+   The measured precision rests on small labelled counts, and `prefer-state-union` was right on
+   about half of its labelled hits, so report hits as places to look, not defects. Raise a rule to
+   `error` only on the owner's word.
 5. Optionally run the scan, which needs Bun:
    `bun vendor/implicit-statescript/src/scan/cli.ts scan <src folder>`. Add `--error` to gate on it
    in CI, and `--config <the Oxlint config>` once it holds `settings["implicit-state"]`.

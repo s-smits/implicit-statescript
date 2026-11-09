@@ -314,6 +314,11 @@ export default defineConfig({
 });
 ```
 
+Then run Oxlint as usual, for example `bunx oxlint src` or `npx oxlint src`. Oxlint loads the
+plugin's TypeScript through Node's type stripping, which needs Node 22.18 or later; where Node is
+older or absent, run it under Bun instead with `bun x --bun oxlint src`. The vendored `src/` holds a
+`package.json` that marks it as an ES module, so keep it when copying, or Node warns on every run.
+
 Keep every rule at `warn` at first: each reports shapes that are sometimes deliberate, and the
 measured precision below rests on small labelled counts. Raise a rule to `error` once its reports on
 your code have been read and found worth acting on.
