@@ -233,7 +233,7 @@ export const noMarkerFileStateRule = defineRule({
       if (guardsItsOwnUse(call, named === null ? text(argument) : call.arguments.map(text).join(","))) {
         return;
       }
-      const decided = decides(call) || call.parent?.type === "VariableDeclarator";
+      const decided = decides(call) || outermost(call).parent?.type === "VariableDeclarator";
       const place = decided ? (named ?? placeOf(argument)) : null;
       if (place === null || createsIfMissing(call, place)) {
         return;

@@ -176,6 +176,19 @@ export const start = (dir: string): void => fs.outputFileSync(dir + "/started", 
       errors: [{ ...phase, line: 4 }],
     },
     {
+      name: "awaited checks held in consts",
+      code: `import { join } from "node:path";
+export async function finish(dir: string) {
+  await Bun.write(join(dir, "done.json"), "");
+}
+export async function phaseOf(dir: string) {
+  const done = await Bun.file(join(dir, "done.json")).exists();
+  const held = await Bun.file(join(dir, "lock")).exists();
+  return done ? "done" : held ? "running" : "idle";
+}`,
+      errors: [{ ...phase, line: 7 }],
+    },
+    {
       name: "fsWrappers names an existence check from another module",
       code: IMPORTED,
       options: [{ fsWrappers: ["isFile"] }],
