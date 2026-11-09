@@ -118,6 +118,7 @@ One function that decides a phase by which files exist in one folder gives the p
 
 ```ts
 // Bad
+export const finish = (dir: string) => [writeFileSync(join(dir, "done.json"), ""), rmSync(join(dir, "lock"))];
 export function phaseOf(dir: string) {
   if (existsSync(join(dir, "done.json"))) return "done";
   return existsSync(join(dir, "lock")) ? "running" : "idle";
@@ -134,13 +135,20 @@ deciding something (a condition, comparison, return or `const`). An existence ch
 `existsSync` (`node:fs`, `fs`), `pathExists` or `pathExistsSync` (`fs-extra`), `Bun.file(p).exists()`,
 or a local function whose body only returns one of those of its parameter. The folder is read from
 `join(dir, "a")`, `resolve(dir, "a")`, `${dir}/a`, `dir + "/a"`, properties of one paths object
-(`paths.lock`, `paths.report`), or a `const` bound to one of those. Not reported: a single guard
-(`if (!existsSync(dir)) mkdirSync(dir)`), files in two folders, one file checked twice.
+(`paths.lock`, `paths.report`), or a `const` bound to one of those. At least one of the files must
+be written, copied, made, removed or renamed by a call in the same module (any call whose name
+begins with `write`, `copyFile`, `cp`, `mkdir`, `rm`, `unlink`, `rename` and their kin), naming it
+directly or through the `const` bound to its path: a phase is recorded by the process that reads
+it. Not reported: a single guard (`if (!existsSync(dir)) mkdirSync(dir)`), files in two folders,
+one file checked twice, files the module only probes (which lockfile a project has, which candidate
+source resolves), and a check that only creates what is missing (`if (!existsSync(readme))
+copyFileSync(template, readme)`), which converges on a rerun and so decides no phase.
 
 Options: `fsWrappers` (functions from another module that ask whether a path exists, such as a
 `hasMarker(dir, name)`; with two or more arguments the last is the file and the rest the folder),
 `stateDirs` (folders whose files are a process's state, such as `runDir`, matched against any
-identifier of the path; in one of those a single deciding check is reported), and `files` (distinct
+identifier of the path; in one of those a single deciding check is reported, whichever module
+writes the file), and `files` (distinct
 files of one folder that make a phase elsewhere, default 2). The lists are empty by default.
 
 ### `no-age-based-lock`

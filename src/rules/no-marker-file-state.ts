@@ -4,8 +4,10 @@ import {
   decides,
   declaredBy,
   enclosingFunction,
+  identifierName,
   innermost,
   isTestPath,
+  outermost,
   propertyName,
 } from "../shared/syntax.ts";
 import { asRecord, isNumber, NAMES_SCHEMA, nameMatcher, type RuleExample } from "../shared/values.ts";
@@ -28,8 +30,13 @@ import { asRecord, isNumber, NAMES_SCHEMA, nameMatcher, type RuleExample } from 
  * (`paths.lock`, `paths.report`), or a `const` this file binds to one of those.
  *
  * Not reported: a single guard (`if (!existsSync(dir)) mkdirSync(dir)`), checks of files in two
- * different folders, and one file checked twice. Tests are not read. There is no fix: which record
- * owns the phase is the change.
+ * different folders, one file checked twice, and files this module never writes, copies, makes,
+ * removes or renames (a call naming one of them, directly or through the `const` bound to its
+ * path), which are input it probes, such as which lockfile a project has or which candidate source
+ * resolves, rather than a phase it records. A check that only creates what is missing (`if
+ * (!existsSync(readme)) copyFileSync(template, readme)`) does not count towards the files, since a
+ * rerun converges and the file's presence decides no phase. Tests are not read. There is no fix:
+ * which record owns the phase is the change.
  *
  * Three options carry what one repository knows, and each is empty or generic by default.
  * `fsWrappers` names the functions that ask whether a path exists from another module (a
@@ -37,12 +44,18 @@ import { asRecord, isNumber, NAMES_SCHEMA, nameMatcher, type RuleExample } from 
  * one called with two or more arguments reads its last as the file and the rest as the folder.
  * `stateDirs` names the folders whose files are a process's state (`runDir`, `stateDir`), matched
  * against any identifier of the folder's path, and in one of those a single deciding check is a
- * phase read off a marker. `files` is how many distinct files of one folder elsewhere make a phase
- * (default 2).
+ * phase read off a marker, whichever module writes it. `files` is how many distinct files of one
+ * folder elsewhere make a phase (default 2).
  */
 const EXISTS = new Set(["existsSync", "pathExists", "pathExistsSync"]);
 const FILES = 2;
 const JOINS = new Set(["join", "resolve"]);
+/** Calls that bring a path into being: a write, a copy, a link or a folder made. */
+const MAKES = "writeFile|copyFile|cp|mkdir|symlink|link|outputFile|outputJson|writeJson|ensureDir|ensureFile";
+const CREATES = new RegExp(String.raw`\b(?:${MAKES})(?:Sync)?\(`, "u");
+/** Calls that change which paths exist: those, a removal, a rename, or any `write…` (`Bun.write`, a
+ *  module's own `writeCompleted`). */
+const CHANGES = new RegExp(`^(?:${MAKES}|rm|rmdir|unlink|rename|remove|move)(?:Sync)?$|^write`, "u");
 
 /** A folder and the file named in it, read off a path expression. */
 interface Place {
@@ -58,7 +71,7 @@ export const noMarkerFileStateRule = defineRule({
       examples: [
         {
           before:
-            'export function phaseOf(dir: string) {\n  if (existsSync(join(dir, "done.json"))) return "done";\n  return existsSync(join(dir, "lock")) ? "running" : "idle";\n}',
+            'export const finish = (dir: string) => [writeFileSync(join(dir, "done.json"), ""), rmSync(join(dir, "lock"))];\nexport function phaseOf(dir: string) {\n  if (existsSync(join(dir, "done.json"))) return "done";\n  return existsSync(join(dir, "lock")) ? "running" : "idle";\n}',
           after:
             'export function phaseOf(dir: string): Phase {\n  return readState(join(dir, "state.json")).phase;\n}',
         },
@@ -85,6 +98,8 @@ export const noMarkerFileStateRule = defineRule({
     let least = FILES;
     const bindings = new Map<string, ESTree.Expression>();
     const found = new Map<ESTree.Node, Map<string, { files: Set<string>; at: ESTree.Node }>>();
+    /** The text of each call that changes which paths exist, with the paths its arguments are bound to. */
+    const changes: string[] = [];
 
     const text = (node: ESTree.Node): string => context.sourceCode.getText(node).replaceAll(/\s+/gu, "");
 
@@ -195,6 +210,24 @@ export const noMarkerFileStateRule = defineRule({
       return { folder: call.arguments.slice(0, -1).map(text).join(","), file: text(last) };
     }
 
+    /**
+     * Whether the check is `if (!exists(p)) create(p)`: a negated test with no `else` whose arm
+     * writes, copies or makes a path in the same folder under the same name. Run again, it
+     * converges, so the file's presence is no phase. Read on the text, as `guardsItsOwnUse` is,
+     * since the arm may spell the path with another join (`join` against `resolve`).
+     */
+    function createsIfMissing(call: ESTree.CallExpression, place: Place): boolean {
+      const negation = outermost(call).parent;
+      const test =
+        negation?.type === "UnaryExpression" && negation.operator === "!" ? outermost(negation) : null;
+      const guard = test?.parent;
+      if (test === null || guard?.type !== "IfStatement" || guard.test !== test || guard.alternate !== null) {
+        return false;
+      }
+      const arm = text(guard.consequent);
+      return CREATES.test(arm) && arm.includes(place.file) && arm.includes(place.folder);
+    }
+
     function record(call: ESTree.CallExpression, argument: ESTree.Node): void {
       const named = placeOfArguments(call);
       if (guardsItsOwnUse(call, named === null ? text(argument) : call.arguments.map(text).join(","))) {
@@ -202,7 +235,7 @@ export const noMarkerFileStateRule = defineRule({
       }
       const decided = decides(call) || call.parent?.type === "VariableDeclarator";
       const place = decided ? (named ?? placeOf(argument)) : null;
-      if (place === null) {
+      if (place === null || createsIfMissing(call, place)) {
         return;
       }
       const owner = enclosingFunction(call) ?? context.sourceCode.ast;
@@ -225,6 +258,7 @@ export const noMarkerFileStateRule = defineRule({
         wrappers.clear();
         bindings.clear();
         found.clear();
+        changes.length = 0;
         return !isTestPath(context.filename);
       },
       // A wrapper may be declared below its first caller, so they are all read before any call.
@@ -252,6 +286,11 @@ export const noMarkerFileStateRule = defineRule({
         }
       },
       "CallExpression:exit": (node) => {
+        if (CHANGES.test(calleeName(node) ?? "")) {
+          // A path bound a line above (`const path = join(dir, NAME)`) is read through its binding.
+          const bound = node.arguments.map((one) => bindings.get(identifierName(one) ?? ""));
+          changes.push([node, ...bound].map((one) => (one === undefined ? "" : text(one))).join(" "));
+        }
         const argument = existence(node);
         if (argument !== null) {
           record(node, argument);
@@ -261,7 +300,13 @@ export const noMarkerFileStateRule = defineRule({
         for (const folders of found.values()) {
           for (const [folder, { files, at }] of folders) {
             const marker = (folder.match(/[$\w]+/gu) ?? []).some(stateDir);
-            if (files.size < least && !marker) {
+            // A phase is recorded by the process that reads it: files this module never writes or
+            // removes are its input (a lockfile format, a candidate source), probed and not kept.
+            // A folder the configuration names as state is read whichever module writes it.
+            const kept = [...files].some((file) =>
+              changes.some((call) => call.includes(file.replaceAll(/^["'`]|["'`]$/gu, ""))),
+            );
+            if ((files.size < least || !kept) && !marker) {
               continue;
             }
             const data = { folder, files: [...files].map((file) => `\`${file}\``).join(", ") };
