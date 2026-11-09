@@ -1,0 +1,32 @@
+{
+  "name": "oxlint-plugin-implicit-statescript",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Oxlint rules and a whole-tree scan that find implicit state machines in TypeScript: state kept in flags, marker files, timestamps or hand-grouped literals instead of one named owner.",
+  "type": "module",
+  "exports": "./src/index.ts",
+  "bin": {
+    "implicit-statescript": "./src/scan/cli.ts"
+  },
+  "files": [
+    "src",
+    "!src/**/*.test.ts"
+  ],
+  "scripts": {
+    "lint": "oxlint src test",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "check": "bun run lint && bun run test && bun run typecheck"
+  },
+  "dependencies": {
+    "@oxlint/plugins": "1.83.0",
+    "typescript5": "npm:typescript@5.9.3"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.3",
+    "oxlint": "1.83.0",
+    "typescript": "7.0.2"
+  },
+  "packageManager": "bun@1.4.4",
+  "license": "MIT"
+}
