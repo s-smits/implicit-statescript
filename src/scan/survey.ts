@@ -9,11 +9,12 @@
  * corpus, state detection by name alone was right on 2 of 29 hits.
  *
  * - Wrappers: a function of at most a few statements whose body forwards a parameter to the
- *   platform: an existence check (`existsSync`, `access`, `stat(...).isFile()`) for
- *   `no-marker-file-state.fsWrappers`, a file time (`stat(...).mtimeMs`) for
- *   `no-age-based-lock.fsWrappers`, or the process table (`kill(pid, 0)`, a spawn of `ps`) for
- *   `no-age-based-lock.processReaders`. A wrapper of `git` and a lock or marker helper are noted,
- *   since no option reads them.
+ *   platform and hands back its answer: an existence check (`existsSync`, `access`,
+ *   `stat(...).isFile()`) for `no-marker-file-state.fsWrappers`, a file time (`stat(...).mtimeMs`)
+ *   for `no-age-based-lock.fsWrappers`, or the process table (`kill(pid, 0)`, a spawn of `ps`) for
+ *   `no-age-based-lock.processReaders`. Its callers are those in its file or importing its name, and
+ *   a name another function also declares is passed over, since an option matches calls by name.
+ *   A wrapper of `git` and a lock or marker helper are noted, since no option reads them.
  * - Setters: a function or method outside the `set*` convention, whose result its callers discard,
  *   handed objects whose boolean fields change from call to call, for `no-coupled-flags.setters`.
  * - Settings records: a record with more than three required booleans none of whose members is
@@ -170,18 +171,54 @@ function functionsOf(parsed: readonly (readonly [string, ts.SourceFile])[]): Fn[
   );
 }
 
-/** Where each name is called, over every file. */
-function callSites(parsed: readonly (readonly [string, ts.SourceFile])[]): Map<string, Evidence[]> {
+/** Where each name is called, over every file, with the names each file imports. */
+function callSites(parsed: readonly (readonly [string, ts.SourceFile])[]): { sites: Map<string, Evidence[]>; imports: Map<string, Set<string>> } {
   const sites = new Map<string, Evidence[]>();
+  const imports = new Map<string, Set<string>>();
   for (const [, file] of parsed) {
+    const imported = new Set<string>();
     for (const node of nodesUnder(file)) {
+      if (ts.isImportSpecifier(node) || ts.isImportClause(node)) {
+        imported.add((ts.isImportSpecifier(node) ? (node.propertyName ?? node.name) : node.name)?.getText(file) ?? "");
+      }
       const name = ts.isCallExpression(node) ? calleeOf(node) : null;
       if (name !== null) {
         sites.set(name, [...(sites.get(name) ?? []), evidenceAt(file, node)]);
       }
     }
+    imports.set(pathOf(file), imported);
   }
-  return sites;
+  return { sites, imports };
+}
+
+/** An expression with parentheses, `await`, `!` and `.catch(...)` or `.then(...)` climbed off. */
+function unwrapped(node: ts.Expression): ts.Expression {
+  if (ts.isParenthesizedExpression(node) || ts.isAwaitExpression(node) || ts.isNonNullExpression(node)) {
+    return unwrapped(node.expression);
+  }
+  if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
+    return unwrapped(node.operand);
+  }
+  const chained = ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && ["catch", "then"].includes(node.expression.name.text);
+  return chained ? unwrapped((node.expression as ts.PropertyAccessExpression).expression) : node;
+}
+
+/** What a function hands back: its concise body, or each `return`'s expression outside nested functions. */
+function handedBack(body: ts.Node): ts.Expression[] {
+  if (!ts.isBlock(body)) {
+    return [body as ts.Expression];
+  }
+  const found: ts.Expression[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isReturnStatement(node) && node.expression !== undefined) {
+      found.push(node.expression);
+    }
+    if (!ts.isFunctionLike(node)) {
+      ts.forEachChild(node, visit);
+    }
+  };
+  ts.forEachChild(body, visit);
+  return found;
 }
 
 /** What a short function forwards its parameter to, or null where it is no wrapper. */
@@ -203,10 +240,20 @@ function wrapped(fn: Fn): "exists" | "time" | "process" | "git" | null {
     const [first] = call.arguments;
     return SPAWNS.has(calleeOf(call) ?? "") && first !== undefined && ts.isStringLiteralLike(first) ? [first.text] : [];
   });
-  if (forwards(EXISTS) || (forwards(STATS) && [...KINDS].some((one) => reads.has(one)))) {
+  // An existence check is what the wrapper hands back, or the `true` and `false` around it; a body
+  // that checks first and then reads (`existsSync(p) ? readFileSync(p) : ""`) is a reader.
+  const answers = (one: ts.Expression): boolean => {
+    const at = unwrapped(one);
+    const call = ts.isCallExpression(at) ? (calleeOf(at) ?? "") : "";
+    return at.kind === ts.SyntaxKind.TrueKeyword || at.kind === ts.SyntaxKind.FalseKeyword || EXISTS.has(call) || KINDS.has(call);
+  };
+  const answer = handedBack(body);
+  if ((forwards(EXISTS) || (forwards(STATS) && [...KINDS].some((one) => reads.has(one)))) && answer.length > 0 && answer.every(answers)) {
     return "exists";
   }
-  if (forwards(STATS) && [...TIMES].some((one) => reads.has(one))) {
+  // Likewise a file's time is what it hands back, not a step on the way to removing the file.
+  const timed = (one: ts.Expression): boolean => nodesUnder(one).some((at) => ts.isPropertyAccessExpression(at) && TIMES.has(at.name.text));
+  if (forwards(STATS) && answer.length > 0 && answer.every(timed)) {
     return "time";
   }
   const kills = calls.some((call) => calleeOf(call) === "kill" && call.arguments[1]?.getText(fn.file) === "0");
@@ -223,25 +270,33 @@ function locksOrMarks(fn: Fn): boolean {
   return words.some((word) => LOCK_WORDS.has(word)) && body !== undefined && nodesUnder(body).some((one) => ts.isCallExpression(one) && FS_TOUCHES.has(calleeOf(one) ?? ""));
 }
 
-/** Wrappers of the platform, proposed by what they forward to; `git` wrappers and lock helpers are noted. */
-function wrappers(functions: readonly Fn[], sites: ReadonlyMap<string, Evidence[]>): { proposals: Proposal[]; noted: Noted[] } {
+/**
+ * Wrappers of the platform, proposed by what they forward to; `git` wrappers and lock helpers are
+ * noted. A caller counts in the wrapper's own file or in a file that imports its name, and a name
+ * another function also declares is not proposed, since the option matches every call by name.
+ */
+function wrappers(functions: readonly Fn[], calls: ReturnType<typeof callSites>): { proposals: Proposal[]; noted: Noted[] } {
   const proposals: Proposal[] = [];
   const noted: Noted[] = [];
   const seen = new Set<string>();
+  const declared = Map.groupBy(functions, (one) => one.name);
   for (const fn of functions) {
     const kind = EXISTS.has(fn.name) || STATS.has(fn.name) ? null : wrapped(fn);
-    const callers = (sites.get(fn.name) ?? []).filter((site) => kind !== "exists" || site.path !== pathOf(fn.file));
+    const own = pathOf(fn.file);
+    const reaches = (site: Evidence): boolean => (site.path === own ? kind !== "exists" : fn.exported && (calls.imports.get(site.path)?.has(fn.name) ?? false));
+    const callers = (calls.sites.get(fn.name) ?? []).filter(reaches);
     const at = evidenceAt(fn.file, fn.node);
     if (kind === "git" || (kind === null && locksOrMarks(fn))) {
       noted.push({ what: kind === "git" ? `\`${fn.name}\` wraps git` : `\`${fn.name}\` reads as a lock or marker helper`, evidence: [at] });
     }
-    if (kind === null || kind === "git" || callers.length === 0 || seen.has(`${kind} ${fn.name}`)) {
+    const shared = (declared.get(fn.name) ?? []).some((other) => other !== fn && wrapped(other) !== kind);
+    if (kind === null || kind === "git" || shared || callers.length === 0 || seen.has(`${kind} ${fn.name}`)) {
       continue;
     }
     seen.add(`${kind} ${fn.name}`);
     const target: Target = kind === "exists" ? "no-marker-file-state.fsWrappers" : kind === "time" ? "no-age-based-lock.fsWrappers" : "no-age-based-lock.processReaders";
     const does = kind === "exists" ? "asks whether a path exists" : kind === "time" ? "returns a file's time" : "asks the process table";
-    const why = `forwards its parameter to the platform and ${does}; called in ${String(callers.length)} places${kind === "exists" ? " in other files" : ""}`;
+    const why = `forwards its parameter to the platform and ${does}; called in ${places(callers.length)}${kind === "exists" ? " in other files" : ""}`;
     const score = Math.min(callers.length, 20) + (CHECK_NAME.test(fn.name) ? 2 : 0);
     proposals.push({ target, value: fn.name, why, score, evidence: [at, ...callers.slice(0, 3)] });
   }
@@ -503,7 +558,8 @@ const places = (count: number, noun = "place"): string => `${String(count)} ${no
 /** What makes two groupings the same: the field's last word and the literals, in order. */
 const groupingKey = (one: Grouping): string => `${lastWord(one.subject)} ${quoted(one.values.toSorted())}`;
 
-/** Exported functions typed as returning a boolean or a literal union that group a parameter's field. */
+/** Exported functions typed as returning a boolean or a literal union that group a parameter's field
+ *  spelled again by hand elsewhere; an owner whose groupings are spelled nowhere else changes nothing. */
 function owners(functions: readonly Fn[], groupings: readonly Grouping[], checker: () => ts.TypeChecker): Proposal[] {
   const elsewhere = Map.groupBy(groupings, groupingKey);
   return functions.flatMap((fn): Proposal[] => {
@@ -523,6 +579,9 @@ function owners(functions: readonly Fn[], groupings: readonly Grouping[], checke
       return [];
     }
     const copies = own.flatMap((one) => (elsewhere.get(groupingKey(one)) ?? []).filter((copy) => copy.within !== fn.name));
+    if (copies.length === 0) {
+      return [];
+    }
     const returns = parts.some((one) => one.isStringLiteral()) ? "a literal union" : "a boolean";
     const groups = own.map((one) => `${quoted(one.values)} over \`${lastWord(one.subject)}\``).join("; ");
     const why = `typed as returning ${returns}, and groups ${groups}; spelled again by hand in ${places(copies.length)}`;

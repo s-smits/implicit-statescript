@@ -1,7 +1,9 @@
 /**
  * The survey over one small tree that holds each fact it proposes once, beside the nearest case it
  * must not propose: a record whose flags are written, a wrapper nobody else calls, a call whose
- * result is used. The command runs once, end to end, to show what adopting each fact changes.
+ * result is used, a reader that checks a path before reading it (`textOf`), and a wrapper whose name
+ * another function also declares (`isDir`). The command runs once, end to end, to show what
+ * adopting each fact changes.
  */
 import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -11,7 +13,7 @@ import { survey } from "./survey.ts";
 import type { SurveyReport } from "./survey-hits.ts";
 
 const TREE: Record<string, string> = {
-  "src/fs.ts": `import { existsSync, statSync } from "node:fs";
+  "src/fs.ts": `import { existsSync, readFileSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 export function isThere(path: string): boolean {
   return existsSync(path);
@@ -30,13 +32,20 @@ export function isAlive(pid: number): boolean {
 export function headOf(dir: string): string {
   return spawnSync("git", ["rev-parse", "HEAD"], { cwd: dir }).stdout.toString();
 }
+export function textOf(path: string): string {
+  return existsSync(path) ? readFileSync(path, "utf8") : "";
+}
+export const isDir = (path: string): boolean => statSync(path).isDirectory();
 `,
   "src/run.ts": `import { join } from "node:path";
-import { isThere } from "./fs.ts";
+import { isDir, isThere, textOf } from "./fs.ts";
 export function phaseOf(runDir: string): string {
   if (isThere(join(runDir, "done"))) return "done";
   return isThere(join(runDir, "started")) ? "running" : "idle";
 }
+export const notes = (runDir: string): string => (isDir(runDir) ? textOf(join(runDir, "notes.md")) : "");
+`,
+  "src/entry.ts": `export const isDir = (entry: { kind: string }): boolean => entry.kind === "dir";
 `,
   "src/lock.ts": `import { readFileSync, rmSync, statSync } from "node:fs";
 import { isAlive, mtimeOf } from "./fs.ts";
@@ -84,6 +93,7 @@ export function finished(runDir: string): string {
 `,
   "src/job.ts": `export type JobState = "queued" | "running" | "done" | "failed";
 export const isOpen = (job: { state: JobState }): boolean => job.state === "queued" || job.state === "running";
+export const lane = (job: { state: JobState }): string => (job.state === "queued" || job.state === "running" ? "open" : "closed");
 `,
   "src/label.ts": `import type { JobState } from "./job.ts";
 export function label(job: { state: JobState }): string {
@@ -151,7 +161,7 @@ describe("implicit-statescript survey", () => {
       "no-age-based-lock.fsWrappers mtimeOf +no-age-based-lock src/lock.ts:4",
       "no-age-based-lock.processReaders isAlive -no-age-based-lock src/lock.ts:7",
       "scan.stateTypes JobState +no-scattered-state-literals src/job.ts:1",
-      "scan.owners isOpen",
+      "scan.owners isOpen +no-scattered-state-literals src/job.ts:2",
     ]);
     expect(report.unexplained).toEqual({ added: [], removed: [] });
   });
