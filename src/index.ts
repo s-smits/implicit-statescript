@@ -1,5 +1,10 @@
 import { eslintCompatPlugin } from "@oxlint/plugins";
 
+import { coAssignedFlagsRule } from "./rules/co-assigned-flags.ts";
+import { excessiveBoolsRule } from "./rules/excessive-bools.ts";
+import { filesAsPhaseRule } from "./rules/files-as-phase.ts";
+import { mtimeAsLockRule } from "./rules/mtime-as-lock.ts";
+
 /**
  * Rules that find implicit state machines: a state whose value has no one typed owner.
  *
@@ -19,7 +24,12 @@ import { eslintCompatPlugin } from "@oxlint/plugins";
  */
 const implicitStatePlugin = eslintCompatPlugin({
   meta: { name: "implicit-state" },
-  rules: {},
+  rules: {
+    "co-assigned-flags": coAssignedFlagsRule,
+    "excessive-bools": excessiveBoolsRule,
+    "files-as-phase": filesAsPhaseRule,
+    "mtime-as-lock": mtimeAsLockRule,
+  },
 });
 
 export default implicitStatePlugin;
