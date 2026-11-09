@@ -1,6 +1,6 @@
 import { defineRule, type ESTree } from "@oxlint/plugins";
 import { CONSTANT_NAME, calleeName, declaredBy, enclosingFunction, innermost, isTestPath, memberObject } from "../shared/syntax.ts";
-import { asRecord, NAMES_SCHEMA, nameMatcher, type RuleExample } from "../shared/values.ts";
+import { asRecord, NAMES_SCHEMA, nameMatcher, stringsOf, type RuleExample } from "../shared/values.ts";
 
 /**
  * A file's age compared with a constant decides whether its holder is alive:
@@ -22,17 +22,24 @@ import { asRecord, NAMES_SCHEMA, nameMatcher, type RuleExample } from "../shared
  * Bun's `Bun.file(p).lastModified`.
  *
  * Not reported: an age that only selects what a report shows or a cache keeps (`files.filter((f)
- * => now - statSync(f).mtimeMs < RECENT)`), since no holder loses anything by it; a file time
+ * => now - statSync(f).mtimeMs < RECENT)`), since no holder loses anything by it; a deletion by age
+ * of data nothing holds, in a function (and the functions around it) that names no holder, where
+ * none of its identifiers, strings, template parts or regular expressions holds a word of
+ * `holderWords` (`for (const dir of builds) if (Date.now() - statSync(dir).mtimeMs > WEEK_MS)
+ * rmSync(dir)` is retention, as pruning `dist` folders older than a week is); a file time
  * compared with another timestamp and no difference (`stat.mtimeMs > lastRun`, which asks "newer
  * than", a cache question); an age printed rather than compared; and an elapsed time that reads no
  * file (`Date.now() - started > limit`). Tests are not read. There is no fix: the owner of the
  * holder's state is a design choice.
  *
- * Two options carry what one repository knows, both empty by default, by name with `*` for any run
- * of characters. `fsWrappers` names the functions that return a file's time from another module
+ * Three options carry what one repository knows. Two are empty by default and match by name, with
+ * `*` for any run of characters. `fsWrappers` names the functions that return a file's time from another module
  * (`mtimeOf(path)`), so their result counts as a file time. `processReaders` names the functions
  * that ask whether a process lives (`isAlive(pid)`, a wrapper of `ps` or `kill(pid, 0)`); a
  * function that calls one asks the holder, and its age test is a fallback rather than the guess.
+ * `holderWords` lists the lowercase words a holder goes by, matched as whole words of a name split
+ * at case changes and non-letters (`lockPath`, `PART_MS`) or of a literal (`"pass.lock"`,
+ * `/\.tmp\.\d+\./`); given, it replaces the default (`HOLDER_WORDS`). A longer list reports more.
  */
 const FILE_TIMES = new Set(["mtimeMs", "ctimeMs", "mtime", "ctime", "lastModified"]);
 /** Calls that take over what an old file guards: delete it, move it aside, or signal its holder. */
@@ -50,6 +57,17 @@ const TAKEOVERS = new Set([
   "kill",
 ]);
 const RELATIONS = new Set(["<", "<=", ">", ">="]);
+/** The words a holder goes by unless `holderWords` says otherwise: a lock, a lease, a process, or a
+ *  temporary or part file that a writer still fills. */
+const HOLDER_WORDS = ["lock", "locks", "lockfile", "lease", "holder", "pid", "reaper", "mutex", "tmp", "temp", "part", "parts"];
+
+/** The lowercase whole words of a name or a literal: `tempDirPath` as temp, dir and path. */
+function wordsOf(text: string): string[] {
+  return text
+    .replaceAll(/([a-z0-9])([A-Z])/gu, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z]+/u);
+}
 
 /** Whether an expression reads a file's modification or change time, by the platform's name or
  *  through a function the repository names (`fsWrappers`). */
@@ -123,7 +141,7 @@ export const noAgeBasedLockRule = defineRule({
     schema: [
       {
         type: "object",
-        properties: { fsWrappers: NAMES_SCHEMA, processReaders: NAMES_SCHEMA },
+        properties: { fsWrappers: NAMES_SCHEMA, processReaders: NAMES_SCHEMA, holderWords: NAMES_SCHEMA },
         additionalProperties: false,
       },
     ],
@@ -138,6 +156,21 @@ export const noAgeBasedLockRule = defineRule({
     const named = new Map<string, ESTree.Node>();
     let wrappers = nameMatcher(undefined);
     let readers = nameMatcher(undefined);
+    let holderWords = new Set(HOLDER_WORDS);
+    /** Each function (or the module, as null) whose own names or literals name a holder. */
+    const holders = new Set<ESTree.Node | null>();
+    const note = (node: ESTree.Node, text: string): void => {
+      if (wordsOf(text).some((word) => holderWords.has(word))) holders.add(enclosingFunction(node));
+    };
+    /** Whether a holder is named in `fn` or a function around it, or in the module for an age outside
+     *  every function. */
+    const nearHolder = (fn: ESTree.Node | null): boolean => {
+      if (fn === null) return holders.has(null);
+      for (let at: ESTree.Node | null = fn; at !== null; at = enclosingFunction(at)) {
+        if (holders.has(at)) return true;
+      }
+      return false;
+    };
     /** Whether a function takes over: it calls a takeover, or a function of this file that does. */
     const takesOver = (fn: ESTree.Node | null, seen = new Set<ESTree.Node | null>()): boolean => {
       seen.add(fn);
@@ -151,11 +184,23 @@ export const noAgeBasedLockRule = defineRule({
         const option = asRecord(context.options[0]) ?? {};
         wrappers = nameMatcher(option.fsWrappers);
         readers = nameMatcher(option.processReaders);
+        const words = Array.isArray(option.holderWords) ? stringsOf(option.holderWords) : HOLDER_WORDS;
+        holderWords = new Set(words.map((word) => word.toLowerCase()));
+        holders.clear();
         constants.clear();
         calls.clear();
         ages.clear();
         named.clear();
         return !isTestPath(context.filename);
+      },
+      Identifier: (node) => {
+        note(node, node.name);
+      },
+      Literal: (node) => {
+        note(node, "regex" in node ? node.regex.pattern : String(node.value));
+      },
+      TemplateElement: (node) => {
+        note(node, node.value.raw);
       },
       FunctionDeclaration: (node) => {
         if (node.id !== null) named.set(node.id.name, node);
@@ -174,7 +219,7 @@ export const noAgeBasedLockRule = defineRule({
       "Program:exit": () => {
         for (const [owner, found] of ages) {
           const called = [...(calls.get(owner) ?? [])];
-          if (!takesOver(owner) || called.some(readers)) continue;
+          if (!takesOver(owner) || !nearHolder(owner) || called.some(readers)) continue;
           for (const node of found) context.report({ node, messageId: "age" });
         }
       },
