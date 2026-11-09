@@ -170,4 +170,19 @@ describe("implicit-statescript scan", () => {
     expect(run("scan", root, "--error").exitCode).toBe(1);
     expect(run("lint", root).exitCode).toBe(2);
   });
+
+  it("refuses a flag the command does not take and a folder that is not there, with exit 2", () => {
+    for (const args of [
+      ["scan", root, "--jsn"],
+      ["scan", root, "--state-type", "JobState"],
+      ["survey", root, "--readers", "3"],
+      ["scan", join(root, "missing")],
+      ["survey", join(root, "src/job.ts")],
+    ]) {
+      const child = run(...args);
+      expect([child.exitCode, child.stdout.toString()]).toEqual([2, ""]);
+      expect(child.stderr.toString()).toContain("usage:");
+    }
+    expect(run("scan", "--help").exitCode).toBe(0);
+  });
 });

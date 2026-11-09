@@ -14,12 +14,14 @@
  *                          survey's report as one JSON object
  *   --error                exit 1 when a state finding is printed, for a gating check
  *
+ * A flag the command does not take, or a folder that is not there, exits 2 with the usage.
+ *
  * Folders named `node_modules`, `dist`, `build`, `out`, `coverage`, `vendor`, `vendored`,
  * `third_party` or `generated`, and every dot folder, are skipped; test files are read by no rule.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { argv, exit, stdout } from "node:process";
+import { argv, exit, stderr, stdout } from "node:process";
 import { asRecord, isNumber, type JsonValue, stringsOf } from "../shared/values.ts";
 import { type Finding, READER_FLOOR, type ScanOptions, scatteredLiterals } from "./scattered-literals.ts";
 import { sourcesUnder } from "./sources.ts";
@@ -29,6 +31,14 @@ const USAGE =
   "usage: implicit-statescript scan [dir] [--readers <n>] [--state-types <a,b>] [--owners <a,b>] [--config <file>] [--enumerations] [--json] [--error]\n" +
   "       implicit-statescript survey [dir] [--json]\n";
 const VALUED = new Set(["--readers", "--state-types", "--owners", "--config"]);
+/** The switches each command reads; `survey` takes no valued flag. */
+const SWITCHES = { scan: new Set(["--enumerations", "--json", "--error"]), survey: new Set(["--json"]) };
+
+/** Refuse the command line with why and the usage, and exit 2. */
+function refuse(why: string): never {
+  stderr.write(`implicit-statescript: ${why}\n${USAGE}`);
+  return exit(2);
+}
 
 /** The command line split into its positional words, its valued flags and its switches. */
 function parsed(words: readonly string[]): { positional: string[]; values: Map<string, string>; switches: Set<string> } {
@@ -74,13 +84,21 @@ function printed(rows: readonly Finding[], files: number, root: string): string 
 }
 
 const [command, ...rest] = argv.slice(2);
-if (command !== "scan" && command !== "survey") {
+const help = command === undefined || command === "--help" || rest.includes("--help");
+if (help || (command !== "scan" && command !== "survey")) {
   stdout.write(USAGE);
-  exit(command === undefined || command === "--help" ? 0 : 2);
+  exit(help ? 0 : 2);
 }
 const { positional, values, switches } = parsed(rest);
+const unknown = [...switches, ...(command === "survey" ? values.keys() : [])].find((flag) => !SWITCHES[command].has(flag));
+if (unknown !== undefined) {
+  refuse(`${command} does not take ${unknown}`);
+}
+const root = positional[0] ?? ".";
+if (!statSync(root, { throwIfNoEntry: false })?.isDirectory()) {
+  refuse(`${root} is not a folder`);
+}
 if (command === "survey") {
-  const root = positional[0] ?? ".";
   const report = surveyed(root, sourcesUnder(root), (path) => readFileSync(join(root, path), "utf8"));
   stdout.write(switches.has("--json") ? `${JSON.stringify(report)}\n` : printedSurvey(report, root));
   exit(0);
@@ -92,11 +110,9 @@ const list = (flag: string, key: string): string[] => {
 };
 const readers = values.has("--readers") ? Number(values.get("--readers")) : isNumber(settings.readers) ? settings.readers : READER_FLOOR;
 if (!Number.isInteger(readers) || readers < 1) {
-  stdout.write(USAGE);
-  exit(2);
+  refuse("--readers takes a whole number of at least 1");
 }
 const options: ScanOptions = { readers, stateTypes: list("--state-types", "stateTypes"), owners: list("--owners", "owners") };
-const root = positional[0] ?? ".";
 const files = sourcesUnder(root);
 const rows = scatteredLiterals(files, options).filter((row) => switches.has("--enumerations") || row.kind === "no-scattered-state-literals");
 if (switches.has("--json")) {

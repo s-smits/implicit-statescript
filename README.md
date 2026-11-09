@@ -267,7 +267,7 @@ same grouping spelled elsewhere is reported at the owner from one place on), `--
 Oxlint config whose `settings["implicit-state"]` holds `readers`, `stateTypes` and `owners`, so the
 scan reads the same file as the rules; a flag beside it wins), `--enumerations`, `--json` (an array
 of `{ rule, file, line, message, places }`), and `--error` (exit 1 on a state finding, for a gating
-check). Folders named `node_modules`, `dist`, `build`, `out`, `coverage`, `vendor`,
+check). A flag the command does not take, or a folder that is not there, exits 2 with the usage. Folders named `node_modules`, `dist`, `build`, `out`, `coverage`, `vendor`,
 `vendored`, `third_party` or `generated`, and every dot folder, are skipped. The scan runs under
 Bun, which strips the types; it needs TypeScript 5 installed under the alias `typescript5`.
 
