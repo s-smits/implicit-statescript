@@ -211,7 +211,7 @@ export function printedSurvey(report: SurveyReport, root: string): string {
     }
   }
   if (idle.length > 0) {
-    lines.push("", `${String(idle.length)} more proposals change no hit today:`);
+    lines.push("", idle.length === 1 ? "1 more proposal changes no hit today:" : `${String(idle.length)} more proposals change no hit today:`);
     lines.push(...[...Map.groupBy(idle, (row) => row.target)].map(([target, rows]) => `  ${target}: ${rows.map((row) => row.value).join(", ")}`));
   }
   const unexplained = [...report.unexplained.added, ...report.unexplained.removed];
