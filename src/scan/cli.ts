@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 /**
  * `implicit-statescript scan [dir]`: the whole-tree scan, over every TypeScript file under a folder.
+ * `implicit-statescript survey [dir]`: the facts about the tree the rules and the scan take as
+ * options, each with its evidence and the hits adopting it would add or remove (`survey.ts`).
  *
  *   --readers <n>          how many files besides the owner must group a set by hand (default 2)
  *   --state-types <a,b>    declared sets the repository holds to be states
@@ -8,21 +10,24 @@
  *   --config <file>        an Oxlint config whose `settings["implicit-state"]` holds `readers`,
  *                          `stateTypes` and `owners`; a flag given beside it wins
  *   --enumerations         also print the sets read as enumerations of kinds rather than states
- *   --json                 print one JSON array of { rule, file, line, message, places }
+ *   --json                 print one JSON array of { rule, file, line, message, places }, or the
+ *                          survey's report as one JSON object
  *   --error                exit 1 when a state finding is printed, for a gating check
  *
  * Folders named `node_modules`, `dist`, `build`, `out`, `coverage`, `vendor`, `vendored`,
  * `third_party` or `generated`, and every dot folder, are skipped; test files are read by no rule.
  */
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { argv, exit, stdout } from "node:process";
 import { asRecord, isNumber, type JsonValue, stringsOf } from "../shared/values.ts";
 import { type Finding, READER_FLOOR, type ScanOptions, scatteredLiterals } from "./scattered-literals.ts";
 import { sourcesUnder } from "./sources.ts";
+import { printedSurvey, surveyed } from "./survey-hits.ts";
 
 const USAGE =
-  "usage: implicit-statescript scan [dir] [--readers <n>] [--state-types <a,b>] [--owners <a,b>] [--config <file>] [--enumerations] [--json] [--error]\n";
+  "usage: implicit-statescript scan [dir] [--readers <n>] [--state-types <a,b>] [--owners <a,b>] [--config <file>] [--enumerations] [--json] [--error]\n" +
+  "       implicit-statescript survey [dir] [--json]\n";
 const VALUED = new Set(["--readers", "--state-types", "--owners", "--config"]);
 
 /** The command line split into its positional words, its valued flags and its switches. */
@@ -69,11 +74,17 @@ function printed(rows: readonly Finding[], files: number, root: string): string 
 }
 
 const [command, ...rest] = argv.slice(2);
-if (command !== "scan") {
+if (command !== "scan" && command !== "survey") {
   stdout.write(USAGE);
   exit(command === undefined || command === "--help" ? 0 : 2);
 }
 const { positional, values, switches } = parsed(rest);
+if (command === "survey") {
+  const root = positional[0] ?? ".";
+  const report = surveyed(root, sourcesUnder(root), (path) => readFileSync(join(root, path), "utf8"));
+  stdout.write(switches.has("--json") ? `${JSON.stringify(report)}\n` : printedSurvey(report, root));
+  exit(0);
+}
 const settings = asRecord(await configured(values.get("--config"))) ?? {};
 const list = (flag: string, key: string): string[] => {
   const given = values.get(flag);

@@ -107,7 +107,7 @@ function writesIn(sources: ReadonlyMap<string, ts.SourceFile>, wanted: ReadonlyS
 }
 
 /** A checker over the parsed files, reading no library and resolving relative imports alone. */
-function checkerOver(sources: ReadonlyMap<string, ts.SourceFile>): ts.TypeChecker {
+export function checkerOver(sources: ReadonlyMap<string, ts.SourceFile>): ts.TypeChecker {
   const options: ts.CompilerOptions = {
     noLib: true,
     types: [],
@@ -145,16 +145,28 @@ function literalsOf(type: ts.Type | undefined): Set<string> {
  * literal is written in an update at all.
  */
 export function statefulSets(sources: ReadonlyMap<string, ts.SourceFile>, sets: readonly LiteralSet[]): boolean[] {
+  return stateWrites(sources, sets).map((write) => write !== undefined);
+}
+
+/**
+ * For each set, the first write that makes it a state, as `statefulSets` reads one, or undefined.
+ * A caller that already holds a checker over the same files passes it, so none is built twice.
+ */
+export function stateWrites(
+  sources: ReadonlyMap<string, ts.SourceFile>,
+  sets: readonly LiteralSet[],
+  given?: () => ts.TypeChecker,
+): (Write | undefined)[] {
   const wanted = new Set(sets.flatMap((one) => [...one.values]));
   const writes = writesIn(sources, wanted);
   if (writes.length === 0) {
-    return sets.map(() => false);
+    return sets.map(() => undefined);
   }
-  const checker = checkerOver(sources);
+  const checker = given === undefined ? checkerOver(sources) : given();
   const typed = writes.map((write) => ({ ...write, spelled: literalsOf(checker.getContextualType(write.at)) }));
   return sets.map(({ values, subjects }) => {
     const names = new Set(subjects.map(lastWord));
-    return typed.some(
+    return typed.find(
       (write) =>
         values.has(write.text) &&
         ([...values].filter((value) => write.spelled.has(value)).length >= 2 || names.has(write.target)),

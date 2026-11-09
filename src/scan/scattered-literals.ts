@@ -49,7 +49,7 @@ export interface Finding {
 }
 
 /** A declared set of states and the file that owns it. */
-interface Declared {
+export interface Declared {
   name: string;
   values: ReadonlySet<string>;
   path: string;
@@ -67,7 +67,7 @@ interface Variants {
 }
 
 /** One condition that compares one subject with two or more literals. */
-interface Grouping {
+export interface Grouping {
   subject: string;
   values: readonly string[];
   path: string;
@@ -100,9 +100,16 @@ const INLINE = "(inline)";
 const lineOf = (file: ts.SourceFile, node: ts.Node): number => file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1;
 const textOf = (file: ts.SourceFile, node: ts.Node): string => node.getText(file).replaceAll(/\s+/gu, "");
 
+/** Each tree's files as parsed, so a survey that scans the same tree twice parses it once. */
+const PARSED = new WeakMap<ReadonlyMap<string, string>, ReadonlyMap<string, ts.SourceFile>>();
+
 /** Each file parsed once, declaration files left out. */
-function parsedSources(files: ReadonlyMap<string, string>): Map<string, ts.SourceFile> {
-  return new Map(
+export function parsedSources(files: ReadonlyMap<string, string>): ReadonlyMap<string, ts.SourceFile> {
+  const known = PARSED.get(files);
+  if (known !== undefined) {
+    return known;
+  }
+  const parsed = new Map(
     [...files]
       .filter(([path]) => !/\.d\.[cm]?ts$/u.test(path))
       .map(([path, text]) => [
@@ -110,6 +117,8 @@ function parsedSources(files: ReadonlyMap<string, string>): Map<string, ts.Sourc
         ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, path.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS),
       ]),
   );
+  PARSED.set(files, parsed);
+  return parsed;
 }
 
 /** The properties of an object type that a single string literal types. */
@@ -367,7 +376,7 @@ function switchGroupings(node: ts.SwitchStatement, file: ts.SourceFile, path: st
 }
 
 /** The name a function is declared or bound under: its own, its method's, or its `const`'s. */
-function functionName(node: ts.Node): string | null {
+export function functionName(node: ts.Node): string | null {
   if ((ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) && node.name !== undefined) {
     return node.name.getText();
   }
@@ -376,7 +385,8 @@ function functionName(node: ts.Node): string | null {
   return (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) && bound ? parent.name.getText() : null;
 }
 
-function groupingsIn(path: string, file: ts.SourceFile): Grouping[] {
+/** Every grouping one file makes, with the function it sits in. */
+export function groupingsIn(path: string, file: ts.SourceFile): Grouping[] {
   const found: Grouping[] = [];
   const visit = (node: ts.Node, within: string | null): void => {
     const add = (rows: readonly Grouping[]): void => {
@@ -424,7 +434,14 @@ function restated(groupings: readonly Grouping[], isOwner: (name: string) => boo
   });
 }
 
-const quoted = (values: Iterable<string>): string => [...values].map((value) => `"${value}"`).join(" | ");
+export const quoted = (values: Iterable<string>): string => [...values].map((value) => `"${value}"`).join(" | ");
+
+/** Every exported set of string literals the files declare, discriminants of unions among them. */
+export function declaredSets(parsed: readonly (readonly [string, ts.SourceFile])[]): Declared[] {
+  const tally: Tally = { tagged: new Map(), variants: [] };
+  const declared = parsed.flatMap(([path, file]) => declaredIn(path, file, tally));
+  return [...declared, ...tally.variants.flatMap((one) => discriminated(one, tally.tagged))];
+}
 
 /** Every declared set of states grouped by hand in `readers` or more other files. */
 export function scatteredLiterals(files: ReadonlyMap<string, string>, options: ScanOptions = {}): Finding[] {
@@ -433,9 +450,7 @@ export function scatteredLiterals(files: ReadonlyMap<string, string>, options: S
   const isStateType = nameMatcher(options.stateTypes ?? []);
   const stateType = (one: Declared): boolean => isStateType(one.name) || isStateType(one.name.split(".")[0] ?? "");
   const parsed = [...parsedSources(files)].filter(([path]) => !isTestPath(path));
-  const tally: Tally = { tagged: new Map(), variants: [] };
-  const declared = parsed.flatMap(([path, file]) => declaredIn(path, file, tally));
-  declared.push(...tally.variants.flatMap((one) => discriminated(one, tally.tagged)));
+  const declared = declaredSets(parsed);
   const groupings = parsed.flatMap(([path, file]) => groupingsIn(path, file));
   const owned = new Map<Declared, Grouping[]>();
   for (const grouping of groupings.filter((one) => one.within === null || one.within === undefined || !isOwner(one.within))) {

@@ -53,9 +53,10 @@ const DECLARATION = /\.d\.[cm]?ts$/u;
 
 type FunctionLike = ESTree.Function | ESTree.ArrowFunctionExpression | ESTree.TSMethodSignature;
 
-/** The name a member declares, for the message. */
+/** The name a member declares, for the message: an identifier's, or a string key's text. */
 function memberName(key: ESTree.Node): string {
-  return identifierName(key) ?? "member";
+  const literal = literalValue(key);
+  return identifierName(key) ?? (typeof literal === "string" ? `'${literal}'` : "member");
 }
 
 /** The boolean members of an interface or a type literal, by name. */
@@ -167,11 +168,14 @@ export const preferStateUnionRule = defineRule({
     const ignored = nameMatcher(option.ignore);
     const cells = new Map<ESTree.Node, string[]>();
 
-    function record(node: ESTree.Node, what: string, names: readonly string[]): void {
+    /** Report a record past `max`, under its name where it has one (`` `Job` ``, `` `Form`'s
+     *  `useState` record ``) and as `unnamed` where it has none. */
+    function record(node: ESTree.Node, unnamed: string, names: readonly string[], suffix = ""): void {
       const name = declaredName(node);
       if (names.length <= max || (name !== null && ignored(name))) {
         return;
       }
+      const what = name === null ? unnamed : `\`${name}\`${suffix}`;
       const data = { what, count: String(names.length), names: names.join(", "), max: String(max) };
       context.report({ node, messageId: "record", data });
     }
@@ -193,7 +197,7 @@ export const preferStateUnionRule = defineRule({
 
     return {
       TSInterfaceDeclaration: (node) =>
-        record(node, `\`${node.id.name}\``, booleanSignatures(node.body.body)),
+        record(node, "this interface", booleanSignatures(node.body.body)),
       TSTypeLiteral: (node) => record(node, "this object type", booleanSignatures(node.members)),
       ClassBody: (node) => record(node, "this class", booleanFields(node)),
       CallExpression: (node) => {
@@ -215,7 +219,7 @@ export const preferStateUnionRule = defineRule({
       },
       "Program:exit": () => {
         for (const [owner, names] of cells) {
-          record(owner, "this function's `useState` record", names);
+          record(owner, "this function's `useState` record", names, "'s `useState` record");
         }
       },
       FunctionDeclaration: (node) => parameters(node, named(node)),
