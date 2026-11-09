@@ -231,6 +231,38 @@ export const api = {
       options: [{ max: null }],
     },
     { name: "a test file is not read for the shapes either", filename: "src/lifecycle.test.ts", code: SHAPES },
+    {
+      name: "a record a parse call is typed with describes bytes another writer laid down",
+      code: `export interface Stored { timedOut: boolean; present: boolean; parses: boolean; cached: boolean }
+export const stored = (text: string) => parseConfig<Stored>(text);`,
+    },
+    {
+      name: "a record cast from a parse, or a list of them, is the same",
+      code: `export type Stored = { timedOut: boolean; present: boolean; parses: boolean; cached: boolean };
+export interface Row { a: boolean; b: boolean; c: boolean; d: boolean }
+export const one = (text: string) => JSON.parse(text) as Stored;
+export const rows = async (load: () => Promise<string>) => (await JSON.parse(await load())) as Row[];`,
+    },
+    {
+      name: "flags each observed from its own source are separate facts",
+      code: `export interface Outcome { timedOut: boolean; exhausted: boolean; moved: boolean; empty: boolean }
+export const outcome = (signal: AbortSignal, turns: number[], most: number, stamp: () => string, before: string, out: string): Outcome => ({
+  timedOut: signal.aborted,
+  exhausted: turns.length >= most,
+  moved: stamp() !== before,
+  empty: out.length === 0,
+});`,
+    },
+    {
+      name: "tags read from one set, one literal key each, are separate facts",
+      code: `export interface Tags { beta: boolean; internal: boolean; pinned: boolean; archived: boolean }
+export const tags = (marks: Set<string>): Tags => ({
+  beta: marks.has("beta"),
+  internal: marks.has("internal"),
+  pinned: marks.has("pinned"),
+  archived: marks.has("archived"),
+});`,
+    },
   ],
   invalid: [
     {
@@ -242,6 +274,44 @@ export const api = {
         { ...record, line: 20 },
         { ...record, line: 26 },
         { ...parameters, line: 33 },
+      ],
+    },
+    {
+      name: "a generic call that parses nothing says nothing of where the record came from",
+      code: `export interface Loaded { timedOut: boolean; present: boolean; parses: boolean; cached: boolean }
+export const loaded = () => load<Loaded>();`,
+      errors: [{ ...record, line: 1 }],
+    },
+    {
+      name: "flags compared from one value are one state",
+      code: `export interface Phase { queued: boolean; running: boolean; done: boolean; failed: boolean }
+export const phase = (kind: string): Phase => ({
+  queued: kind === "queued",
+  running: kind === "running",
+  done: kind === "done",
+  failed: kind === "failed",
+});`,
+      errors: [{ ...record, line: 1 }],
+    },
+    {
+      name: "flags projected from one state, one through another flag, are one state",
+      code: `export interface Row { writer: boolean; keeper: boolean; quiet: boolean; open: boolean }
+export const row = (state: { kind: string; kept?: boolean }, door: boolean): Row => {
+  const writer = "kept" in state;
+  return { writer, keeper: writer ? state.kept === true : false, quiet: state.kind === "quiet", open: door };
+};`,
+      errors: [{ ...record, line: 1 }],
+    },
+    {
+      name: "a literal of constants shows nothing, and one literal apart does not outweigh another",
+      code: `export interface Mode { open: boolean; closing: boolean; closed: boolean; locked: boolean }
+export const opened = (): Mode => ({ open: true, closing: false, closed: false, locked: false });
+export interface Mixed { ready: boolean; busy: boolean; done: boolean; idle: boolean }
+export const apart = (a: number, b: string, c: number[], d: Date): Mixed => ({ ready: a > 0, busy: b !== "", done: c.length > 0, idle: d.getTime() > 0 });
+export const together = (p: string): Mixed => ({ ready: p === "ready", busy: p === "busy", done: p === "done", idle: p === "idle" });`,
+      errors: [
+        { ...record, line: 1 },
+        { ...record, line: 3 },
       ],
     },
     {

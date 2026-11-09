@@ -9,6 +9,7 @@ import {
   literalValue,
   objectValues,
   outermost,
+  propertyName,
 } from "../shared/syntax.ts";
 import {
   asRecord,
@@ -64,6 +65,17 @@ import {
  * literal or whose type argument is a flag. `max: null` turns the record count off and leaves the
  * two shapes.
  *
+ * Two interfaces or object types are read as independent facts rather than one state, and the
+ * count passes them. One that a parse call is typed with, by its type argument or an `as` around it
+ * (`parseConfig<Report>(text)`, `JSON.parse(text) as Report`, any callee whose name holds "parse"),
+ * describes bytes another writer laid down, as a declaration file describes another package. And
+ * one whose every object literal in the file holding all its flags builds each flag from names no
+ * other flag reads (`timedOut: signal.aborted`, `moved: stamp() !== before`) records separate
+ * observations, as `tags.has("beta")` beside `tags.has("public")` records separate tags, since a
+ * membership of one literal key reads no name. Flags compared from one value (`kind === "a"`, `kind
+ * === "b"`) still count, and so does a record no literal builds or one built from constants (`{
+ * open: false, closed: false }`), which shows nothing.
+ *
  * The function half counts a declaration's boolean parameters and reports more than `params`
  * (Clippy's default, 3). A repository that already reports every boolean parameter on its own
  * passes `params: null` and keeps one owner for that fact.
@@ -83,6 +95,7 @@ const MAX_FIELDS = 3;
 const MAX_PARAMS = 3;
 const DECLARATION = /\.d\.[cm]?ts$/u;
 const COMPARISON = new Set(["===", "!==", "==", "!=", "<", "<=", ">", ">=", "in", "instanceof"]);
+const PARSE = /parse/iu;
 
 type FunctionLike = ESTree.Function | ESTree.ArrowFunctionExpression | ESTree.TSMethodSignature;
 type Member = ESTree.MethodDefinition | ESTree.PropertyDefinition;
@@ -193,6 +206,69 @@ function declaredName(node: ESTree.Node | null): string | null {
   return keyed && !holder.computed && holder.value === node ? memberName(holder.key) : null;
 }
 
+/** Whether `node` asks a set for one literal key: `tags.has("beta")`. */
+const membership = (node: ESTree.Node): boolean =>
+  node.type === "CallExpression" &&
+  propertyName(node.callee) === "has" &&
+  node.arguments.length === 1 &&
+  literalValue(node.arguments[0]) !== undefined;
+
+/** Whether a value is a syntax node, for a walk over a node's children. */
+const isNode = (value: unknown): value is ESTree.Node =>
+  typeof value === "object" && value !== null && typeof (value as { type?: unknown }).type === "string";
+
+/** The names a flag's value reads: each identifier not reached through a member, `undefined` aside,
+ *  and none for a membership, since one key's membership tells nothing of another's. */
+function namesRead(node: ESTree.Node, into: Set<string>): Set<string> {
+  if (membership(node)) {
+    return into;
+  }
+  if (node.type === "Identifier") {
+    if (node.name !== "undefined") into.add(node.name);
+    return into;
+  }
+  if (node.type === "MemberExpression" && !node.computed) {
+    return namesRead(node.object, into);
+  }
+  for (const [key, child] of Object.entries(node)) {
+    if (key === "parent") continue;
+    for (const item of Array.isArray(child) ? child : [child]) {
+      if (isNode(item)) namesRead(item, into);
+    }
+  }
+  return into;
+}
+
+/** Whether an object literal builds each of `flags` from names no other of them reads, with no flag
+ *  a constant: a literal of constants shows nothing, and two flags that read one name may be one
+ *  state. */
+function separate(values: ReadonlyMap<string, ESTree.Node>, flags: readonly string[]): boolean {
+  const built = flags.flatMap((flag) => values.get(flag) ?? []);
+  const reads = built.map((value) => [...namesRead(value, new Set())]);
+  const read = reads.flat();
+  return (
+    built.length === flags.length &&
+    built.every((value, at) => (reads[at]?.length ?? 0) > 0 || membership(value)) &&
+    new Set(read).size === read.length
+  );
+}
+
+/** The type a parse call is typed with, by its type argument or an `as` around it, an array's
+ *  element type included: `Report` for `JSON.parse(text) as Report[]`. */
+function parsedType(node: ESTree.CallExpression): string | null {
+  if (!PARSE.test(calleeName(node) ?? "")) {
+    return null;
+  }
+  const [argument] = node.typeArguments?.params ?? [];
+  let around = node.parent;
+  while (around?.type === "AwaitExpression" || around?.type === "ParenthesizedExpression") {
+    around = around.parent;
+  }
+  const type = argument ?? (around?.type === "TSAsExpression" ? around.typeAnnotation : undefined);
+  const element = type?.type === "TSArrayType" ? type.elementType : type;
+  return element?.type === "TSTypeReference" ? identifierName(element.typeName) : null;
+}
+
 /** A threshold option: a number, or null to leave that half to another rule. */
 function threshold(option: JsonValue | undefined, fallback: number): number | null {
   if (option === null) {
@@ -258,6 +334,22 @@ export const preferStateUnionRule = defineRule({
     const moves = new Map<ESTree.ClassBody, Map<string, Set<string>>>();
     /** The nodes already reported, so a record the count and a shape both read is reported once. */
     const reported = new Set<ESTree.Node>();
+    /** Interfaces and object types past `max`, held until the file's parse calls and object
+     *  literals are read, and the names of the types a parse call is typed with. */
+    const candidates: { node: ESTree.Node; unnamed: string; flags: string[] }[] = [];
+    const parsed = new Set<string>();
+    /** Whether a record's flags are separate facts: the shape of parsed bytes, or built apart. */
+    const independent = (node: ESTree.Node, flags: readonly string[]): boolean => {
+      const name = declaredName(node);
+      if (name !== null && parsed.has(name)) {
+        return true;
+      }
+      const building = objects.map(objectValues).filter((values) => flags.every((flag) => values.has(flag)));
+      return building.length > 0 && building.every((values) => separate(values, flags));
+    };
+    const candidate = (node: ESTree.Node, unnamed: string, flags: string[]): void => {
+      if (max !== null && flags.length > max) candidates.push({ node, unnamed, flags });
+    };
     const resolved = (node: ESTree.Node): ESTree.Node => {
       const value = innermost(node);
       return innermost(bound.get(identifierName(value) ?? "") ?? value);
@@ -326,9 +418,8 @@ export const preferStateUnionRule = defineRule({
     }
 
     return {
-      TSInterfaceDeclaration: (node) =>
-        record(node, "this interface", booleanSignatures(node.body.body)),
-      TSTypeLiteral: (node) => record(node, "this object type", booleanSignatures(node.members)),
+      TSInterfaceDeclaration: (node) => candidate(node, "this interface", booleanSignatures(node.body.body)),
+      TSTypeLiteral: (node) => candidate(node, "this object type", booleanSignatures(node.members)),
       ClassBody: (node) => {
         moves.set(node, new Map(booleanFields(node).map((field) => [field, new Set<string>()])));
       },
@@ -368,6 +459,8 @@ export const preferStateUnionRule = defineRule({
         objects.push(node);
       },
       CallExpression: (node) => {
+        const type = parsedType(node);
+        if (type !== null) parsed.add(type);
         if (!booleanCell(node)) {
           return;
         }
@@ -385,6 +478,9 @@ export const preferStateUnionRule = defineRule({
         }
       },
       "Program:exit": () => {
+        for (const { node, unnamed, flags } of candidates) {
+          if (!independent(node, flags)) record(node, unnamed, flags);
+        }
         for (const [owner, names] of cells) {
           record(owner, "this function's `useState` record", names, "'s `useState` record");
         }
