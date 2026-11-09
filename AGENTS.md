@@ -2,6 +2,7 @@
 
 - `src/` is the plugin and the scan as a repository vendors them; `test/` holds the shared test
   helpers.
+- `examples/` holds small programs the README's counts are read from; change the README with them.
 - Keep every rule generic: infer structure from the syntax, recognise the platform's own APIs, and
   add no application-specific names, paths or exceptions. A list a rule needs is an option with a
   generic default.
