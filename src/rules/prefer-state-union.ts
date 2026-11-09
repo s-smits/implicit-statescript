@@ -9,7 +9,6 @@ import {
   literalValue,
   objectValues,
   outermost,
-  propertyName,
 } from "../shared/syntax.ts";
 import {
   asRecord,
@@ -87,8 +86,12 @@ const COMPARISON = new Set(["===", "!==", "==", "!=", "<", "<=", ">", ">=", "in"
 type FunctionLike = ESTree.Function | ESTree.ArrowFunctionExpression | ESTree.TSMethodSignature;
 type Member = ESTree.MethodDefinition | ESTree.PropertyDefinition;
 
-/** The name a member declares, for the message: an identifier's, or a string key's text. */
+/** The name a member declares, for the message: an identifier's, a private name with its `#`, or
+ *  a string key's text. */
 function memberName(key: ESTree.Node): string {
+  if (key.type === "PrivateIdentifier") {
+    return `#${key.name}`;
+  }
   const literal = literalValue(key);
   return identifierName(key) ?? (typeof literal === "string" ? `'${literal}'` : "member");
 }
@@ -321,14 +324,14 @@ export const preferStateUnionRule = defineRule({
         moves.set(node, new Map(booleanFields(node).map((field) => [field, new Set<string>()])));
       },
       AssignmentExpression: (node) => {
-        const field = propertyName(node.left);
+        const { left } = node;
         const member = memberOf(node);
         const body = member?.parent;
-        const target = node.left.type === "MemberExpression" && node.left.object.type === "ThisExpression";
-        if (!target || field === null || member === null || body?.type !== "ClassBody") {
+        const target = left.type === "MemberExpression" && !left.computed && left.object.type === "ThisExpression";
+        if (!target || member === null || body?.type !== "ClassBody") {
           return;
         }
-        moves.get(body)?.get(field)?.add(text(member.key));
+        moves.get(body)?.get(memberName(left.property))?.add(text(member.key));
       },
       "ClassBody:exit": (node) => {
         const fields = moves.get(node) ?? new Map<string, Set<string>>();

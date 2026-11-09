@@ -287,6 +287,29 @@ export interface EditorState { idle: boolean; busy: boolean; saving: boolean; fa
       errors: [{ ...lifecycle, line: 1 }],
     },
     {
+      name: "private fields count and move under their own names",
+      code: `export class Server {
+  #started = false;
+  #closed = false;
+  start() {
+    this.#started = true;
+  }
+  close() {
+    this.#closed = true;
+  }
+}
+export class Dialog {
+  #open = false;
+  #closing = false;
+  #closed = true;
+  #dragging: boolean = false;
+}`,
+      errors: [
+        { ...lifecycle, line: 1 },
+        { ...record, line: 11 },
+      ],
+    },
+    {
       name: "params lowers the parameter threshold",
       code: `export const toggle = (open: boolean, modal: boolean) => [open, modal];`,
       options: [{ params: 1 }],
