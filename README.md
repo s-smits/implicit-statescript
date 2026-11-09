@@ -230,6 +230,16 @@ record of `minify?`, `sourcemap?` is a set of independent settings. A member typ
 counts. A class already reported as a lifecycle is not counted again. Declaration files (`.d.ts`)
 are not read.
 
+An interface or object type whose flags are independent facts is not counted either, in two
+shapes read from its file. One a parse call is typed with, by type argument or `as`
+(`parseConfig<Report>(text)`, `JSON.parse(text) as Report[]`, any callee whose name holds
+"parse"), describes bytes another writer laid down. One whose every object literal holding all its
+flags builds each from names no other flag reads (`timedOut: signal.aborted`, `moved: stamp() !==
+before`, or `tags.has("beta")` beside `tags.has("public")`, since a membership of one literal key
+reads no name) records separate observations. Flags compared from one value (`kind === "queued"`,
+`kind === "done"`), projected from one state, or written as constants, and a record no literal in
+its file builds, are still counted.
+
 Options: `max` (booleans allowed on a record, default 3, as Clippy; `null` turns the record count
 off and leaves the two shapes), `params` (boolean parameters allowed on a function, default 3;
 `null` turns the function half off for a repository that already reports boolean parameters
@@ -460,6 +470,9 @@ How to read them:
   false hits among the 29 were such latches. It no longer counts a member typed as one literal
   (a brand or a discriminant) or a `readonly` field given a literal (a constant), which removed
   thirteen labelled negatives across hono, pnpm, rollup, tldraw and trpc with recall unchanged.
+  The count has since stopped reporting a record a parse call is typed with or one whose flags
+  are each built from names no other reads; its figures above and the counts below were measured
+  before that and were not remeasured.
 
 Limits of these figures: beyond their small size, most `prefer-state-union` hits on the foreign
 trees of the first corpus (108 on excalidraw's history, 49 on vite's) were never labelled, so its
