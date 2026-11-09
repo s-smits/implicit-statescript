@@ -227,8 +227,9 @@ off and leaves the two shapes), `params` (boolean parameters allowed on a functi
 `null` turns the function half off for a repository that already reports boolean parameters
 another way), and `ignore` (records, classes, components and functions the repository reads as
 settings rather than state, such as `TldrawOptions` or `*Props`; a derived flag is ignored by the
-function that builds its object; empty by default). The message names the record, so a hit can be
-copied into `ignore`.
+function that builds its object; empty by default). A function is named by its declaration, the
+`const` it is bound to, or the method or property key it is the value of. The message names the
+record or function, so a hit can be copied into `ignore`.
 
 Every list option matches names, with `*` standing for any run of characters (`*Options`).
 

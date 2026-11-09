@@ -206,6 +206,21 @@ export const draw = (fill: boolean, stroke: boolean, shadow: boolean, dashed: bo
       options: [{ ignore: ["Toolbar", "draw"] }],
     },
     {
+      name: "ignore names a method, an object's method and a class's arrow field by their keys",
+      code: `export class Renderer {
+  draw(a: boolean, b: boolean, c: boolean, d: boolean) {
+    return [a, b, c, d];
+  }
+  fill = (a: boolean, b: boolean, c: boolean, d: boolean) => [a, b, c, d];
+}
+export const api = {
+  paint(a: boolean, b: boolean, c: boolean, d: boolean) {
+    return [a, b, c, d];
+  },
+};`,
+      options: [{ ignore: ["draw", "fill", "paint"] }],
+    },
+    {
       name: "ignore names a class for its lifecycle and a function for its derived flag",
       code: SHAPES,
       options: [{ ignore: ["Container", "isOver", "settle"] }],

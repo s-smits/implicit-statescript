@@ -71,7 +71,8 @@ import {
  * `ignore` names the records, classes, components and functions a repository reads as settings
  * rather than state (`TldrawOptions`, or `*Props` for every props record), by name with `*` for
  * any run of characters. It applies to every shape: a class by its name, a derived flag by the
- * function that builds its object. It is a fact about one repository, so it is empty by default.
+ * function that builds its object, and a function by its own name, its `const`, or the method or
+ * property key it is the value of. It is a fact about one repository, so it is empty by default.
  *
  * Test files and declaration files (`.d.ts`, another package's interface described) are not read:
  * a fixture lists its flags beside each other on purpose.
@@ -159,13 +160,11 @@ function cellName(call: ESTree.CallExpression): string {
   return identifierName(first) ?? "state";
 }
 
-/** The name a function declares, for the message. */
-const named = (node: { id?: ESTree.Node | null }): string => identifierName(node.id) ?? "this function";
-
 /**
- * The name a record is declared under, for `ignore`: an interface's, a type alias's for its object
- * type, a class's for its body, and a function's for its `useState` cells, by its own name or the
- * `const` it is bound to. Null for an object type or a function nothing names.
+ * The name a record or function is declared under, for messages and `ignore`: an interface's, a
+ * type alias's for its object type, a class's for its body, and a function's by its own name, the
+ * `const` it is bound to, or the method or property key it is the value of. Null for an object type
+ * or a function nothing names.
  */
 function declaredName(node: ESTree.Node | null): string | null {
   if (node === null) {
@@ -180,8 +179,18 @@ function declaredName(node: ESTree.Node | null): string | null {
       ? identifierName(holder.id)
       : null;
   }
-  const own = node.type === "FunctionDeclaration" || node.type === "FunctionExpression" ? identifierName(node.id) : null;
-  return own ?? (holder?.type === "VariableDeclarator" ? identifierName(holder.id) : null);
+  const own =
+    node.type === "FunctionDeclaration" || node.type === "FunctionExpression" || node.type === "TSDeclareFunction"
+      ? identifierName(node.id)
+      : null;
+  if (own !== null) {
+    return own;
+  }
+  if (holder?.type === "VariableDeclarator") {
+    return identifierName(holder.id);
+  }
+  const keyed = holder?.type === "MethodDefinition" || holder?.type === "Property" || holder?.type === "PropertyDefinition";
+  return keyed && !holder.computed && holder.value === node ? memberName(holder.key) : null;
 }
 
 /** A threshold option: a number, or null to leave that half to another rule. */
@@ -230,7 +239,7 @@ export const preferStateUnionRule = defineRule({
       record:
         "{{what}} holds {{count}} booleans ({{names}}), more than {{max}}. Flags admit every combination; a union of named states admits only the ones that happen.",
       parameters:
-        "`{{fn}}` takes {{count}} boolean parameters, more than {{max}}. Name the modes with string-literal unions, or split the operation.",
+        "{{fn}} takes {{count}} boolean parameters, more than {{max}}. Name the modes with string-literal unions, or split the operation.",
     },
   },
   create(context) {
@@ -301,8 +310,8 @@ export const preferStateUnionRule = defineRule({
       context.report({ node, messageId: "record", data });
     }
 
-    function parameters(node: FunctionLike, fn: string): void {
-      if (params === null || ignored(fn)) {
+    function parameters(node: FunctionLike, fn: string | null): void {
+      if (params === null || (fn !== null && ignored(fn))) {
         return;
       }
       const flags = node.params.filter((parameter) => flagBinding(parameter) !== null);
@@ -312,7 +321,7 @@ export const preferStateUnionRule = defineRule({
       context.report({
         node,
         messageId: "parameters",
-        data: { fn, count: String(flags.length), max: String(params) },
+        data: { fn: fn === null ? "This function" : `\`${fn}\``, count: String(flags.length), max: String(params) },
       });
     }
 
@@ -395,17 +404,10 @@ export const preferStateUnionRule = defineRule({
           context.report({ node, messageId: "derived", data: { derived, a, b } });
         }
       },
-      FunctionDeclaration: (node) => parameters(node, named(node)),
-      TSDeclareFunction: (node) => parameters(node, named(node)),
-      FunctionExpression: (node) => parameters(node, named(node)),
-      ArrowFunctionExpression: (node) => {
-        const holder = node.parent;
-        const fn =
-          holder?.type === "VariableDeclarator" && holder.id.type === "Identifier"
-            ? holder.id.name
-            : "this function";
-        parameters(node, fn);
-      },
+      FunctionDeclaration: (node) => parameters(node, declaredName(node)),
+      TSDeclareFunction: (node) => parameters(node, declaredName(node)),
+      FunctionExpression: (node) => parameters(node, declaredName(node)),
+      ArrowFunctionExpression: (node) => parameters(node, declaredName(node)),
       TSMethodSignature: (node) => parameters(node, memberName(node.key)),
     };
   },
