@@ -99,7 +99,7 @@ function threshold(option: JsonValue | undefined, fallback: number): number | nu
   return isNumber(option) ? option : fallback;
 }
 
-export const excessiveBoolsRule = defineRule({
+export const preferStateUnionRule = defineRule({
   meta: {
     type: "suggestion",
     docs: {

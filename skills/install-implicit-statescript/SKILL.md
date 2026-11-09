@@ -1,6 +1,6 @@
 ---
 name: install-implicit-statescript
-description: Vendor the implicit-statescript Oxlint plugin into a TypeScript repository, register its rules at warn, and run the type-aware literal-spread scan. Use when asked to add implicit state machine checks, find flags or marker files that spell a hidden state, or install implicit-statescript.
+description: Vendor the implicit-statescript Oxlint plugin into a TypeScript repository, register its rules at warn, and run the type-aware scattered-literals scan. Use when asked to add implicit state machine checks, find flags or marker files that spell a hidden state, or install implicit-statescript.
 ---
 
 # Install implicit-statescript
@@ -12,11 +12,11 @@ description: Vendor the implicit-statescript Oxlint plugin into a TypeScript rep
    scan is wanted.
 3. Register the plugin in the target's Oxlint config (`oxlint.config.ts` or `.oxlintrc.json`):
    add `{ "name": "implicit-state", "specifier": "./vendor/implicit-statescript/src/index.ts" }`
-   to `jsPlugins`, and set `implicit-state/co-assigned-flags`, `implicit-state/excessive-bools`,
-   `implicit-state/files-as-phase` and `implicit-state/mtime-as-lock` to `"warn"`. Merge with the
-   existing config; do not replace it.
-4. Run Oxlint and read every implicit-state warning before proposing a change. `excessive-bools`
-   and `mtime-as-lock` are experimental (precision near a third to a half when measured), so
+   to `jsPlugins`, and set `implicit-state/no-age-based-lock`, `implicit-state/no-coupled-flags`,
+   `implicit-state/no-marker-file-state` and `implicit-state/prefer-state-union` to `"warn"`. Merge
+   with the existing config; do not replace it.
+4. Run Oxlint and read every implicit-state warning before proposing a change. `prefer-state-union`
+   and `no-age-based-lock` are experimental (precision near a third to a half when measured), so
    report their hits as places to look, not defects. Raise a rule to `error` only on the owner's
    word.
 5. Optionally run the scan, which needs Bun:

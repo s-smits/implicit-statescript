@@ -13,7 +13,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { argv, exit, stdout } from "node:process";
-import { type Finding, literalSpread, READER_FLOOR } from "./literal-spread.ts";
+import { type Finding, scatteredLiterals, READER_FLOOR } from "./scattered-literals.ts";
 
 const SKIPPED_DIRECTORY = /^(?:node_modules|dist|build|out|coverage|vendor|vendored|third[-_]party|generated)$|^\./u;
 const SOURCE = /\.(?:ts|tsx|mts|cts)$/u;
@@ -58,11 +58,11 @@ if (!Number.isInteger(readers) || readers < 1) {
 }
 const root = rest.find((argument, index) => !argument.startsWith("--") && (at === -1 || index !== at + 1)) ?? ".";
 const files = sourcesUnder(root);
-const rows = literalSpread(files, readers).filter((row) => rest.includes("--enumerations") || row.kind === "state-literal-spread");
+const rows = scatteredLiterals(files, readers).filter((row) => rest.includes("--enumerations") || row.kind === "no-scattered-state-literals");
 if (rest.includes("--json")) {
   const found = rows.map((row) => ({ rule: row.kind, file: row.path, line: row.line, message: row.detail, places: row.places }));
   stdout.write(`${JSON.stringify(found)}\n`);
 } else {
   stdout.write(printed(rows, files.size, root));
 }
-exit(rest.includes("--error") && rows.some((row) => row.kind === "state-literal-spread") ? 1 : 0);
+exit(rest.includes("--error") && rows.some((row) => row.kind === "no-scattered-state-literals") ? 1 : 0);

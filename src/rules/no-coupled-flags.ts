@@ -143,7 +143,7 @@ function clusters(writes: readonly CoWrite[], minWrites: number): string[][] {
   return [...Map.groupBy(names, root).values()];
 }
 
-export const coAssignedFlagsRule = defineRule({
+export const noCoupledFlagsRule = defineRule({
   meta: {
     type: "suggestion",
     docs: {

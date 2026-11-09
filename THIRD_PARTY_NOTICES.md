@@ -8,7 +8,7 @@ below, whose licences require their notices to travel with the copies.
 - Source: https://github.com/rust-lang/rust-clippy, `clippy_lints/src/excessive_bools.rs` at
   commit 146674f (`struct_excessive_bools` and `fn_params_excessive_bools`), dual-licensed MIT or
   Apache-2.0; this port takes it under MIT.
-- Port: `src/rules/excessive-bools.ts`, TypeScript over Oxlint's ESTree. Local changes: a record
+- Port: `src/rules/prefer-state-union.ts`, TypeScript over Oxlint's ESTree. Local changes: a record
   is an interface, an object type literal or a class rather than a struct; a flag is a required
   member typed `boolean`, `true` or `false` (with `undefined` or `null` beside it) or a class field
   initialised to a boolean, where Clippy counts every `bool` field; optional members and
@@ -50,7 +50,7 @@ DEALINGS IN THE SOFTWARE.
 
 - Source: https://github.com/mitsuhiko/rust-excessive-bools-lint, `src/lib.rs` at commit 0f95d16,
   the lint Clippy's `excessive_bools` grew from.
-- Port: the same `src/rules/excessive-bools.ts`, which follows Clippy's later form; from this
+- Port: the same `src/rules/prefer-state-union.ts`, which follows Clippy's later form; from this
   original it keeps the argument that several booleans on one record are one state spelled as
   flags, and the advice to name the states instead.
 
@@ -93,7 +93,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 - Source: https://github.com/foxglove/eslint-plugin, `rules/no-boolean-parameters.js` at commit
   e381b5a, MIT.
 - Port: its reading of which annotation and which parameter hold a flag, in `src/shared/flags.ts`,
-  through which `excessive-bools` counts flag parameters. Local changes: the type checker's union
+  through which `prefer-state-union` counts flag parameters. Local changes: the type checker's union
   parts become the written annotation (`boolean`, `true` or `false`, beside `undefined`, `null` or
   `void`) and a default of `true` or `false`; the rule's own reporting, options and suggestions are
   not taken.

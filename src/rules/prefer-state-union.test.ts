@@ -1,6 +1,6 @@
 import { RuleTester } from "../../test/rule-tester.ts";
 
-import { excessiveBoolsRule } from "./excessive-bools.ts";
+import { preferStateUnionRule } from "./prefer-state-union.ts";
 
 const tester = new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } });
 const record = { messageId: "record" };
@@ -50,7 +50,7 @@ const FOUR_PARAMETERS = `export function draw(fill: boolean, stroke: boolean, sh
   return [fill, stroke, shadow, dashed];
 }`;
 
-tester.run("implicit-state/excessive-bools", excessiveBoolsRule, {
+tester.run("implicit-state/prefer-state-union", preferStateUnionRule, {
   valid: [
     {
       name: "optional settings are independent choices",

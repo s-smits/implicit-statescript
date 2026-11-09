@@ -38,14 +38,20 @@ recognises platform APIs by their own names under any receiver or import, so `ex
 `node:fs`, `fs.existsSync` and a destructured `existsSync` all count. The status column comes from
 the measurements below.
 
+Names follow ESLint's convention: a prefix of `no`, `prefer`, `require` or `max` says what kind of
+rule it is, and the rest names its subject. Earlier versions called the rules `excessive-bools`
+(now `prefer-state-union`), `co-assigned-flags` (`no-coupled-flags`), `files-as-phase`
+(`no-marker-file-state`) and `mtime-as-lock` (`no-age-based-lock`), and the scan
+`state-literal-spread` (`no-scattered-state-literals`).
+
 | Rule | Reports | Status |
 | --- | --- | --- |
-| `co-assigned-flags` | fields written together where each write sets at most one | generic, low recall |
-| `excessive-bools` | a record, class, `useState` set or signature with more than three booleans | experimental |
-| `files-as-phase` | a phase decided by which files exist in one folder | generic, one known false shape |
-| `mtime-as-lock` | a file's age against a constant deciding whether its holder lives | experimental |
+| `no-coupled-flags` | fields written together where each write sets at most one | generic, low recall |
+| `prefer-state-union` | a record, class, `useState` set or signature with more than three booleans | experimental |
+| `no-marker-file-state` | a phase decided by which files exist in one folder | generic, one known false shape |
+| `no-age-based-lock` | a file's age against a constant deciding whether its holder lives | experimental |
 
-### `co-assigned-flags`
+### `no-coupled-flags`
 
 Fields of one state written together, where each write sets at most one of them, are one mode with
 no name: nothing stops a later write from setting two.
@@ -72,7 +78,7 @@ reset that clears every field.
 Options: `fields` (least cluster size, default 2), `writes` (least co-writes of each pair, default
 3), `exclusive` (share of co-writes that must set at most one field, default 0.9).
 
-### `excessive-bools`
+### `prefer-state-union`
 
 Several booleans on one record are usually one state spelled as flags. Ported from Clippy's
 `struct_excessive_bools` and `fn_params_excessive_bools`.
@@ -102,7 +108,7 @@ Options: `max` (booleans allowed on a record, default 3, as Clippy), `params` (b
 allowed on a function, default 3; `null` turns the function half off for a repository that already
 reports boolean parameters another way).
 
-### `files-as-phase`
+### `no-marker-file-state`
 
 One function that decides a phase by which files exist in one folder gives the phase no owner.
 
@@ -127,7 +133,7 @@ or a local function whose body only returns one of those of its parameter. The f
 (`paths.lock`, `paths.report`), or a `const` bound to one of those. Not reported: a single guard
 (`if (!existsSync(dir)) mkdirSync(dir)`), files in two folders, one file checked twice.
 
-### `mtime-as-lock`
+### `no-age-based-lock`
 
 A file's age compared with a constant guesses at its holder's state: a slow holder reads as a dead
 one and a second process takes the lock.
@@ -151,7 +157,7 @@ Node layers), read as `.mtimeMs`, `.mtime.getTime()`, `+stat.mtime` or `Number(s
 Bun's `Bun.file(p).lastModified`. Not reported: "newer than" (`stat.mtimeMs > lastRun`, a cache
 question), an age that is printed, and an elapsed time that reads no file.
 
-## The scan: `state-literal-spread`
+## The scan: `no-scattered-state-literals`
 
 A spread of literals needs types, which an Oxlint rule does not have, so it ships as a command over
 a whole folder:
@@ -171,7 +177,7 @@ methods, compass points, file extensions); only states are reported unless `--en
 passed.
 
 ```text
-state-literal-spread (1)
+no-scattered-state-literals (1)
   orders/order.ts:3  `OrderStatus` ("pending" | "paid" | "shipped" | "delivered" | "cancelled") is grouped by hand in 2 other files, as "paid" | "shipped"; "paid" | "pending": give each grouping a name in the owner and call it
       orders/refunds.ts:3
       orders/list.ts:3
@@ -206,10 +212,10 @@ import { defineConfig } from "oxlint";
 export default defineConfig({
   jsPlugins: [{ name: "implicit-state", specifier: "./vendor/implicit-statescript/src/index.ts" }],
   rules: {
-    "implicit-state/co-assigned-flags": "warn",
-    "implicit-state/excessive-bools": "warn",
-    "implicit-state/files-as-phase": "warn",
-    "implicit-state/mtime-as-lock": "warn",
+    "implicit-state/no-coupled-flags": "warn",
+    "implicit-state/prefer-state-union": "warn",
+    "implicit-state/no-marker-file-state": "warn",
+    "implicit-state/no-age-based-lock": "warn",
   },
 });
 ```
@@ -220,10 +226,10 @@ With `.oxlintrc.json`:
 {
   "jsPlugins": [{ "name": "implicit-state", "specifier": "./vendor/implicit-statescript/src/index.ts" }],
   "rules": {
-    "implicit-state/co-assigned-flags": "warn",
-    "implicit-state/excessive-bools": ["warn", { "max": 3, "params": 3 }],
-    "implicit-state/files-as-phase": "warn",
-    "implicit-state/mtime-as-lock": "warn"
+    "implicit-state/no-coupled-flags": "warn",
+    "implicit-state/prefer-state-union": ["warn", { "max": 3, "params": 3 }],
+    "implicit-state/no-marker-file-state": "warn",
+    "implicit-state/no-age-based-lock": "warn"
   }
 }
 ```
@@ -250,34 +256,34 @@ means no labelled item of that kind.
 
 | Rule | source project R / P | excalidraw R / P | vite R / P | changesets R / P | synthetic R |
 | --- | --- | --- | --- | --- | --- |
-| `excessive-bools` | 5/7, 6/18 | 4/4, 6/17 | 4/5, 5/11 | -, 0/1 | 4/4 |
-| `files-as-phase` | 2/6, 2/2 | - | - | -, 0/1 | 1/1 |
-| `mtime-as-lock` | 2/3, 2/5 | - | 1/1, 1/1 | - | 1/1 |
-| `co-assigned-flags` | 0/3, - | 1/7, 1/1 | - | - | - |
-| `state-literal-spread` (scan) | 4/10, 2/2 | 7/9, 7/8 | -, 0/1 | - | 1/3 |
+| `prefer-state-union` | 5/7, 6/18 | 4/4, 6/17 | 4/5, 5/11 | -, 0/1 | 4/4 |
+| `no-marker-file-state` | 2/6, 2/2 | - | - | -, 0/1 | 1/1 |
+| `no-age-based-lock` | 2/3, 2/5 | - | 1/1, 1/1 | - | 1/1 |
+| `no-coupled-flags` | 0/3, - | 1/7, 1/1 | - | - | - |
+| `no-scattered-state-literals` (scan) | 4/10, 2/2 | 7/9, 7/8 | -, 0/1 | - | 1/3 |
 
 How to read them:
 
-- **`state-literal-spread`** is the strongest. Swept over every tree, at 2 other files it reads
+- **`no-scattered-state-literals`** is the strongest. Swept over every tree, at 2 other files it reads
   recall 55% and precision 83%, and at 3 files 41% and 88%. The state-or-enumeration split is what
   makes it usable: without it no threshold reached 80% precision (the best was 43%), and the split
   removed six false hits and no true one. Known misses: a literal assigned through a local variable
   before the field write, and a reply's discriminant (vite's fetch result type) read as a state.
-- **`co-assigned-flags`** hit no negative, but caught 1 of 10 labelled positives. A flag written as
+- **`no-coupled-flags`** hit no negative, but caught 1 of 10 labelled positives. A flag written as
   a computed boolean (`isResizing: type !== "rotation"`) counts as set, so complementary pairs over
   one discriminant are missed. It is safe at `warn` and quiet.
-- **`files-as-phase`** was right on 2 of 3 hits on real code. The false hit is a create-if-missing
+- **`no-marker-file-state`** was right on 2 of 3 hits on real code. The false hit is a create-if-missing
   set-up (changesets' `init`), which seeds each file only where it is missing and converges on a
   rerun; excluding an existence test whose only branch writes the same path is the planned fix.
-- **`mtime-as-lock`** is experimental: 3 of 6 hits were true. The true hits delete or claim what the
+- **`no-age-based-lock`** is experimental: 3 of 6 hits were true. The true hits delete or claim what the
   old file guards; each false hit uses the age only to filter what a report shows. Requiring the
   age test to guard a removal, a kill or a claim is the planned narrowing.
-- **`excessive-bools`** is experimental: precision was 33% to 45% on every tree, and the sweep
+- **`prefer-state-union`** is experimental: precision was 33% to 45% on every tree, and the sweep
   reached 80% only at five booleans, with recall 10%. A count cannot tell a set of independent
   options from a mode. Treat its reports as prompts to look, or raise `max`.
 
 Limits of these figures: foreign precision rests on at most about fifteen judged hits per rule per
-project, and most `excessive-bools` hits on the foreign trees (108 on excalidraw's history, 49 on
+project, and most `prefer-state-union` hits on the foreign trees (108 on excalidraw's history, 49 on
 vite's) were never labelled, so its foreign precision is a sample. The rules were written against
 the source project, so its column is not a held-out measurement; the foreign columns are closer to
 one.
@@ -288,7 +294,7 @@ For scale, the plugin and the scan at their defaults over the heads of other ope
 TypeScript projects. These hits were counted, not read, so they say how much a rule reports, not
 how often it is right.
 
-| Project (commit) | files linted | co-assigned-flags | excessive-bools | files-as-phase | mtime-as-lock | scan: state / enumeration |
+| Project (commit) | files linted | no-coupled-flags | prefer-state-union | no-marker-file-state | no-age-based-lock | scan: state / enumeration |
 | --- | --- | --- | --- | --- | --- | --- |
 | excalidraw (`701b901a0`) | 723 | 1 | 12 | 0 | 0 | 7 / 2 |
 | vite (`a579e352a`) | 1681 | 0 | 1 | 0 | 1 | 1 / 1 |
@@ -318,11 +324,11 @@ the plugin loaded. `test/examples.test.ts` lints every rule's `meta.docs.example
 README repeats, so the bad example must report and the good one must pass.
 
 `examples/` holds small programs that show each finding beside a near miss that passes. The
-plugin reports six warnings there (two `co-assigned-flags`, two `excessive-bools`, one
-`files-as-phase`, one `mtime-as-lock`) and the scan one state spread (`examples/orders/`).
+plugin reports six warnings there (two `no-coupled-flags`, two `prefer-state-union`, one
+`no-marker-file-state`, one `no-age-based-lock`) and the scan one state spread (`examples/orders/`).
 
 ## Licence
 
-MIT; see `LICENSE`. `excessive-bools` is ported from Clippy and from `rust-excessive-bools-lint`,
+MIT; see `LICENSE`. `prefer-state-union` is ported from Clippy and from `rust-excessive-bools-lint`,
 and `src/shared/flags.ts` from Foxglove's ESLint plugin; their notices are in
 `THIRD_PARTY_NOTICES.md`.

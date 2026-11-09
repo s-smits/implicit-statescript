@@ -4,14 +4,14 @@ import { join } from "node:path";
 
 const LOCK_STALE_MS = 10 * 60 * 1000;
 
-// files-as-phase: which markers exist in one folder decides the phase.
+// no-marker-file-state: which markers exist in one folder decides the phase.
 export function cachePhase(dir: string): "ready" | "building" | "empty" {
   if (existsSync(join(dir, "manifest.json"))) return "ready";
   if (existsSync(join(dir, "build.lock"))) return "building";
   return "empty";
 }
 
-// mtime-as-lock: an old lock is taken to mean its holder died.
+// no-age-based-lock: an old lock is taken to mean its holder died.
 export function takeLock(dir: string): void {
   const lock = join(dir, "build.lock");
   if (existsSync(lock) && Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) {

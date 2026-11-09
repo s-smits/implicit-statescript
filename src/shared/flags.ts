@@ -3,7 +3,7 @@ import { literalValue } from "./syntax.ts";
 import { isBoolean } from "./values.ts";
 
 /**
- * Which annotations and parameters hold a flag, for `excessive-bools`. The reading of a union and
+ * Which annotations and parameters hold a flag, for `prefer-state-union`. The reading of a union and
  * a default follows Foxglove's `no-boolean-parameters` (`THIRD_PARTY_NOTICES.md`), which asks the
  * type checker for a type whose parts are boolean beside `undefined`, `null` or `void`; a plugin
  * rule never asks the checker, so this reads the written annotation and the default instead.

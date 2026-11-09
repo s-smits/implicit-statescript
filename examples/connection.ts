@@ -1,5 +1,5 @@
-// A WebSocket client whose connection state is spelled as flags. excessive-bools reports the class
-// (five boolean fields) and co-assigned-flags reports the fields its methods write together.
+// A WebSocket client whose connection state is spelled as flags. prefer-state-union reports the class
+// (five boolean fields) and no-coupled-flags reports the fields its methods write together.
 
 export class Connection {
   connecting = false;

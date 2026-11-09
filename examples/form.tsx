@@ -1,5 +1,5 @@
 // A React form whose submission phase lives in four useState cells, set by hand in each handler.
-// excessive-bools reports the component's cells and co-assigned-flags the setter runs.
+// prefer-state-union reports the component's cells and no-coupled-flags the setter runs.
 import { useState } from "react";
 
 export function SignupForm({ submit }: { submit: (email: string) => Promise<void> }) {

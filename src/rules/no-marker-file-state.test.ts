@@ -1,6 +1,6 @@
 import { RuleTester } from "../../test/rule-tester.ts";
 
-import { filesAsPhaseRule } from "./files-as-phase.ts";
+import { noMarkerFileStateRule } from "./no-marker-file-state.ts";
 
 const tester = new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } });
 const phase = { messageId: "phase" };
@@ -24,7 +24,7 @@ export function apart(jobDir: string, cacheDir: string): boolean {
 }
 `;
 
-tester.run("implicit-state/files-as-phase", filesAsPhaseRule, {
+tester.run("implicit-state/no-marker-file-state", noMarkerFileStateRule, {
   valid: [
     {
       name: "a single guard",

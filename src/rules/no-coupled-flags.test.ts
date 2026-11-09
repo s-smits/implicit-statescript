@@ -1,6 +1,6 @@
 import { RuleTester } from "../../test/rule-tester.ts";
 
-import { coAssignedFlagsRule } from "./co-assigned-flags.ts";
+import { noCoupledFlagsRule } from "./no-coupled-flags.ts";
 
 const tester = new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } });
 const mode = { messageId: "mode" };
@@ -69,7 +69,7 @@ export function clearOnce(store: { open: boolean; dirty: boolean }) {
 }
 `;
 
-tester.run("implicit-state/co-assigned-flags", coAssignedFlagsRule, {
+tester.run("implicit-state/no-coupled-flags", noCoupledFlagsRule, {
   valid: [
     {
       name: "options created whole and passed on are independent choices",

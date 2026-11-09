@@ -1,5 +1,5 @@
 /**
- * `state-literal-spread`: a declared set of states compared by hand in several files. An Oxlint
+ * `no-scattered-state-literals`: a declared set of states compared by hand in several files. An Oxlint
  * rule sees one file, so it cannot tell a union's owner from its readers; this scan reads every
  * file at once.
  *
@@ -17,7 +17,7 @@
  * and does not count. The remedy is a predicate or a table in the owner that each reader calls.
  *
  * A set none of whose literals is written where a value changes reads as an enumeration of kinds
- * rather than a state (`state-role.ts`) and is reported apart, as `enumeration-literal-spread`.
+ * rather than a state (`state-role.ts`) and is reported apart, as `no-scattered-enumeration-literals`.
  *
  * Not read: tests, declaration files, vendored and generated folders. `typeof x === "string"` is
  * no state. The scan is syntactic apart from that filter, and leans to silence.
@@ -27,7 +27,8 @@ import { isTestPath } from "../shared/syntax.ts";
 import { type LiteralSet, statefulSets } from "./state-role.ts";
 
 /** What the scan reports: a state, or a set read as an enumeration of kinds. */
-export type FindingKind = "state-literal-spread" | "enumeration-literal-spread";
+export const FINDING_KINDS = ["no-scattered-state-literals", "no-scattered-enumeration-literals"] as const;
+export type FindingKind = (typeof FINDING_KINDS)[number];
 
 /** One finding: where the set is declared, why, and every place that groups it. */
 export interface Finding {
@@ -369,7 +370,7 @@ function groupingsIn(path: string, file: ts.SourceFile): Grouping[] {
 const quoted = (values: Iterable<string>): string => [...values].map((value) => `"${value}"`).join(" | ");
 
 /** Every declared set of states grouped by hand in `readers` or more other files. */
-export function literalSpread(files: ReadonlyMap<string, string>, readers = READER_FLOOR): Finding[] {
+export function scatteredLiterals(files: ReadonlyMap<string, string>, readers = READER_FLOOR): Finding[] {
   const parsed = [...parsedSources(files)].filter(([path]) => !isTestPath(path));
   const tally: Tally = { tagged: new Map(), variants: [] };
   const declared = parsed.flatMap(([path, file]) => declaredIn(path, file, tally));
@@ -399,7 +400,7 @@ export function literalSpread(files: ReadonlyMap<string, string>, readers = READ
     }
     const sets = new Set(groupedBy.map((one) => quoted(one.values.toSorted())));
     const row: Finding = {
-      kind: "state-literal-spread",
+      kind: "no-scattered-state-literals",
       path: owner.path,
       line: owner.line,
       detail: `\`${owner.name}\` (${quoted(owner.values)}) is grouped by hand in ${readerFiles.size} other files, as ${[...sets].join("; ")}: give each grouping a name in the owner and call it`,
@@ -416,7 +417,7 @@ export function literalSpread(files: ReadonlyMap<string, string>, readers = READ
       ? row
       : {
           ...row,
-          kind: "enumeration-literal-spread",
+          kind: "no-scattered-enumeration-literals",
           detail: `an enumeration rather than a state, since no literal of it is written where a value changes: ${row.detail}`,
         },
   );

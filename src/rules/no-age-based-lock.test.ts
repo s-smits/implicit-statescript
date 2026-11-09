@@ -1,6 +1,6 @@
 import { RuleTester } from "../../test/rule-tester.ts";
 
-import { mtimeAsLockRule } from "./mtime-as-lock.ts";
+import { noAgeBasedLockRule } from "./no-age-based-lock.ts";
 
 const tester = new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } });
 const age = { messageId: "age" };
@@ -22,7 +22,7 @@ export function old(file: string, days: number): boolean {
 }
 `;
 
-tester.run("implicit-state/mtime-as-lock", mtimeAsLockRule, {
+tester.run("implicit-state/no-age-based-lock", noAgeBasedLockRule, {
   valid: [
     {
       name: "a file time against another timestamp asks newer-than, a cache question",
